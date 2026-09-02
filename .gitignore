@@ -1,0 +1,37 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# === Virtual Environment ===
+venv/
+.venv/
+env/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Data (raw CSV không push lên Git) ===
+data/raw/*.csv
+
+# === Model binary (file lớn, không push) ===
+models/*.pkl
+
+# === Reports (ảnh sinh ra từ training) ===
+reports/*.png
+
+# === Logs & Temp ===
+*.log
+*.tmp
