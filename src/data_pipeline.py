@@ -43,20 +43,31 @@ TARGET_COLUMN: str = "Chuyen_Nganh"
 # ============================================================
 def load_raw_data(filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
     """Load raw CSV dataset from Kaggle."""
-    # TODO: Sprint 1 - Task 1
-    raise NotImplementedError("Sprint 1 - Task 1: Implement data loading")
+    if not os.path.exists(filepath):
+        print(f"File {filepath} không tồn tại. Tiến hành tải tự động từ UCI repository...")
+        import urllib.request
+        import zipfile
+        url = "https://archive.ics.uci.edu/ml/machine-learning-databases/00320/student.zip"
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        zip_path = os.path.join(os.path.dirname(filepath), "student.zip")
+        urllib.request.urlretrieve(url, zip_path)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extract("student-mat.csv", os.path.dirname(filepath))
+        os.remove(zip_path)
+        
+    # Dataset Student Performance thường dùng dấu chấm phẩy ';' làm delimiter
+    return pd.read_csv(filepath, sep=';')
 
 
 def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     """Handle missing values and report dropped/filled rows."""
-    # TODO: Sprint 1 - Task 2
-    raise NotImplementedError("Sprint 1 - Task 2: Implement missing value handling")
+    return df.dropna()
 
 
 def rename_and_select_features(df: pd.DataFrame) -> pd.DataFrame:
     """Select relevant columns (G1, G2, G3) and rename to FIT-HAU names."""
-    # TODO: Sprint 1 - Task 3
-    raise NotImplementedError("Sprint 1 - Task 3: Implement feature mapping")
+    df_selected = df[["G1", "G2", "G3"]].copy()
+    return df_selected.rename(columns=COLUMN_MAPPING)
 
 
 def normalize_scores(df: pd.DataFrame) -> pd.DataFrame:
@@ -65,8 +76,8 @@ def normalize_scores(df: pd.DataFrame) -> pd.DataFrame:
     Formula: score_10 = score_20 * (10 / 20)
     Uses Pandas vectorization — NO for-loops allowed.
     """
-    # TODO: Sprint 1 - Task 4 (part 1)
-    raise NotImplementedError("Sprint 1 - Task 4a: Implement score normalization")
+    df[FEATURE_COLUMNS] = df[FEATURE_COLUMNS] * (MAX_SCORE / KAGGLE_MAX_SCORE)
+    return df
 
 
 def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
@@ -77,8 +88,19 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
         - 'SE'       : Strong in programming subjects
         - 'Cảnh báo' : Below threshold — academic warning
     """
-    # TODO: Sprint 1 - Task 4 (part 2)
-    raise NotImplementedError("Sprint 1 - Task 4b: Implement labeling rules")
+    def categorize(row):
+        # Nếu điểm trung bình < 5 -> Cảnh báo
+        if row[FEATURE_COLUMNS].mean() < 5.0:
+            return "Cảnh báo"
+        
+        # Nếu điểm Toán > Lập trình -> Hợp với AI hơn, ngược lại là SE
+        if row["Toan_Roi_Rac"] >= row["Lap_Trinh_C"]:
+            return "AI"
+        else:
+            return "SE"
+
+    df[TARGET_COLUMN] = df.apply(categorize, axis=1)
+    return df
 
 
 def run_pipeline() -> pd.DataFrame:
