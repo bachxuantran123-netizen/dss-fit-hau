@@ -18,15 +18,18 @@ PROCESSED_DATA_PATH: str = os.path.join("data", "processed", "FIT_HAU_Cleaned.cs
 MAX_SCORE: float = 10.0
 MIN_SCORE: float = 0.0
 
-# Ánh xạ tên cột từ Tiếng Việt sang Tiếng Anh chuẩn cho mô hình train
+# Mở rộng ánh xạ cho tất cả các cột có thể xuất hiện trong file mới của bạn
 COLUMN_MAPPING: dict[str, str] = {
     "điểm Toán rời rạc": "Toan_Roi_Rac",
     "điểm kĩ thuật lập trình": "Lap_Trinh_C",
+    "điểm kỹ thuật lập trình": "Lap_Trinh_C",
     "điểm CSDL": "Co_So_Du_Lieu",
+    "điểm Cơ sở dữ liệu": "Co_So_Du_Lieu",
     "Chuyên Ngành": "Chuyen_Nganh"
 }
 
-FEATURE_COLUMNS: list[str] = ["Toan_Roi_Rac", "Lap_Trinh_C", "Co_So_Du_Lieu"]
+# Danh sách feature cơ bản (có thể tự động mở rộng theo file thực tế)
+DEFAULT_FEATURE_COLUMNS: list[str] = ["Toan_Roi_Rac", "Lap_Trinh_C", "Co_So_Du_Lieu"]
 TARGET_COLUMN: str = "Chuyen_Nganh"
 
 
@@ -61,14 +64,17 @@ def load_raw_data(filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
 def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     """Handle missing values by filling missing scores with 0.0 instead of dropping rows."""
     df_cleaned = df.copy()
-    score_cols = [col for col in df_cleaned.columns if 'điểm' in col]
+    score_cols = [col for col in df_cleaned.columns if 'điểm' in col.lower() or 'diem' in col.lower()]
 
     # Điền giá trị 0.0 cho các môn bị thiếu điểm thay vì xóa dòng
-    df_cleaned[score_cols] = df_cleaned[score_cols].fillna(0.0)
+    if score_cols:
+        df_cleaned[score_cols] = df_cleaned[score_cols].fillna(0.0)
 
     # Loại bỏ các dòng hoàn toàn không có tên sinh viên
-    if 'Họ và tên' in df_cleaned.columns:
-        df_cleaned = df_cleaned.dropna(subset=['Họ y tên'] if 'Họ y tên' in df_cleaned.columns else ['Họ và tên'])
+    for name_col in ['Họ và tên', 'Họ y tên', 'Ho va ten', 'Ten']:
+        if name_col in df_cleaned.columns:
+            df_cleaned = df_cleaned.dropna(subset=[name_col])
+            break
 
     return df_cleaned
 
@@ -77,19 +83,30 @@ def rename_and_select_features(df: pd.DataFrame) -> pd.DataFrame:
     """Select relevant columns and rename to FIT-HAU standard names."""
     df_renamed = df.rename(columns=COLUMN_MAPPING)
 
-    cols_to_keep = [col for col in FEATURE_COLUMNS if col in df_renamed.columns]
-    if TARGET_COLUMN in df_renamed.columns:
-        cols_to_keep.append(TARGET_COLUMN)
+    # Lấy tự động tất cả các cột điểm sau khi map hoặc giữ lại các cột số (trừ target)
+    # Giúp linh hoạt khi file mới có nhiều cột hơn
+    potential_features = [col for col in df_renamed.columns if col != TARGET_COLUMN and col not in ['Họ và tên', 'MSSV', 'STT']]
 
-    return df_renamed[cols_to_keep].copy()
+    # Đảm bảo các cột feature quan trọng luôn tồn tại nếu có
+    cols_to_keep = potential_features if len(potential_features) > 0 else DEFAULT_FEATURE_COLUMNS
+
+    if TARGET_COLUMN in df_renamed.columns:
+        if TARGET_COLUMN not in cols_to_keep:
+            cols_to_keep.append(TARGET_COLUMN)
+
+    # Chỉ lấy những cột thực sự có trong dataframe để tránh lỗi KeyError
+    valid_cols = [col for col in cols_to_keep if col in df_renamed.columns]
+    return df_renamed[valid_cols].copy()
 
 
 def normalize_scores(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure all score features are numeric and within 0-10 scale."""
     df_norm = df.copy()
-    for col in FEATURE_COLUMNS:
-        if col in df_norm.columns:
-            df_norm[col] = pd.to_numeric(df_norm[col], errors='coerce').fillna(0.0).round(1)
+    # Lấy tất cả các cột trừ cột target ra để normalize dạng số điểm
+    feature_cols = [col for col in df_norm.columns if col != TARGET_COLUMN]
+
+    for col in feature_cols:
+        df_norm[col] = pd.to_numeric(df_norm[col], errors='coerce').fillna(0.0).round(1)
     return df_norm
 
 
@@ -100,10 +117,14 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
     if TARGET_COLUMN in df_labeled.columns and not df_labeled[TARGET_COLUMN].isnull().all():
         return df_labeled
 
+    # Xác định các cột để xét điều kiện gán nhãn linh hoạt theo các cột đang có
+    col_toan = "Toan_Roi_Rac" if "Toan_Roi_Rac" in df_labeled.columns else df_labeled.columns[0]
+    col_laptrinh = "Lap_Trinh_C" if "Lap_Trinh_C" in df_labeled.columns else (df_labeled.columns[1] if len(df_labeled.columns) > 1 else df_labeled.columns[0])
+
     conditions = [
-        (df_labeled["Toan_Roi_Rac"] < 5.0) | (df_labeled["Lap_Trinh_C"] < 5.0),
-        (df_labeled["Toan_Roi_Rac"] >= 6.5) & (df_labeled["Toan_Roi_Rac"] >= df_labeled["Lap_Trinh_C"]),
-        (df_labeled["Lap_Trinh_C"] >= 6.5)
+        (df_labeled[col_toan] < 5.0) | (df_labeled[col_laptrinh] < 5.0),
+        (df_labeled[col_toan] >= 6.5) & (df_labeled[col_toan] >= df_labeled[col_laptrinh]),
+        (df_labeled[col_laptrinh] >= 6.5)
     ]
     choices = ["Cảnh báo", "AI", "SE"]
 
@@ -124,7 +145,6 @@ def run_pipeline() -> pd.DataFrame:
 
     # Step 2: Missing values
     print("\n[2/5] Handling missing values...")
-    rows_before = len(df)
     df = handle_missing_values(df)
     print(f"      ✅ Rows retained: {len(df)} (filled missing scores with 0.0)")
 
@@ -136,7 +156,10 @@ def run_pipeline() -> pd.DataFrame:
     # Step 4: Normalize
     print("\n[4/5] Normalizing scores...")
     df = normalize_scores(df)
-    print(f"      ✅ Score range: {df[FEATURE_COLUMNS].min().min():.1f} — {df[FEATURE_COLUMNS].max().max():.1f}")
+    feature_cols_current = [col for col in df.columns if col != TARGET_COLUMN]
+    min_val = df[feature_cols_current].min().min() if feature_cols_current else 0.0
+    max_val = df[feature_cols_current].max().max() if feature_cols_current else 0.0
+    print(f"      ✅ Score range: {min_val:.1f} — {max_val:.1f}")
 
     # Step 5: Label
     print("\n[5/5] Assigning major labels...")
