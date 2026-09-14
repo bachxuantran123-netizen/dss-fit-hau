@@ -6,6 +6,7 @@ hỗ trợ linh hoạt cấu trúc dữ liệu mở rộng với 23 features.
 """
 
 import os
+import sys
 import joblib
 import pandas as pd
 import numpy as np
@@ -14,11 +15,14 @@ from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 
+# Fix Windows console encoding
+sys.stdout.reconfigure(encoding='utf-8')
+
 # ============================================================
 # CONSTANTS
 # ============================================================
 PROCESSED_DATA_PATH: str = os.path.join("data", "processed", "FIT_HAU_Cleaned.csv")
-MODEL_SAVE_PATH: str = os.path.join("models", "decision_tree_model.pkl")
+MODEL_SAVE_PATH: str = os.path.join("models", "dss_brain.pkl")
 CONFUSION_MATRIX_PATH: str = os.path.join("reports", "dss_confusion_matrix.png")
 TREE_PLOT_PATH: str = os.path.join("reports", "dss_tree.png")
 

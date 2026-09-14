@@ -1,178 +1,182 @@
 """
-data_pipeline.py — Sprint 1: Data Preprocessing & Labeling
-===========================================================
-Module xử lý dữ liệu điểm sinh viên thực tế (Tiếng Việt)
-và chuyển đổi sang định dạng chuẩn FIT-HAU phục vụ huấn luyện Decision Tree.
+data_pipeline.py — Data Preprocessing & Labeling (v2)
+======================================================
+Module xử lý dữ liệu điểm sinh viên FIT-HAU từ file CSV đã trích xuất từ PDF.
+Gán nhãn 5 hướng nghề nghiệp dựa trên Ma trận Kỹ năng (Skill Matrix).
+
+Pipeline: FIT_HAU_Raw_Scores.csv → Clean → Label → FIT_HAU_Cleaned.csv
 """
 
 import os
+import sys
 import numpy as np
 import pandas as pd
+
+# Fix Windows console encoding
+sys.stdout.reconfigure(encoding='utf-8')
 
 # ============================================================
 # CONSTANTS
 # ============================================================
-RAW_DATA_PATH: str = os.path.join("data", "raw", "student-mat.csv")
+RAW_DATA_PATH: str = os.path.join("data", "raw", "FIT_HAU_Raw_Scores.csv")
 PROCESSED_DATA_PATH: str = os.path.join("data", "processed", "FIT_HAU_Cleaned.csv")
 
-MAX_SCORE: float = 10.0
-MIN_SCORE: float = 0.0
+TARGET_COLUMN: str = "Chuyen_Nganh"
 
-# Mở rộng ánh xạ cho tất cả các cột có thể xuất hiện trong file mới của bạn
-COLUMN_MAPPING: dict[str, str] = {
-    "điểm Toán rời rạc": "Toan_Roi_Rac",
-    "điểm kĩ thuật lập trình": "Lap_Trinh_C",
-    "điểm kỹ thuật lập trình": "Lap_Trinh_C",
-    "điểm CSDL": "Co_So_Du_Lieu",
-    "điểm Cơ sở dữ liệu": "Co_So_Du_Lieu",
-    "Chuyên Ngành": "Chuyen_Nganh"
+# Metadata columns — sẽ bị loại bỏ khỏi features trước khi train
+NON_FEATURE_COLUMNS: list[str] = ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]
+
+# ============================================================
+# SKILL MATRIX — Ánh xạ nhóm môn học → Hướng nghề nghiệp
+# ============================================================
+# Đây là phần có thể thay thế bằng K-Means clustering sau này.
+# Hiện tại dùng Heuristic Rules (Expert-defined Skill Matrix).
+SKILL_MATRIX: dict[str, list[str]] = {
+    "Software Engineer": [
+        "CÔNG NGHỆ PHẦN MỀM",
+        "KỸ THUẬT LẬP TRÌNH",
+        "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
+        "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
+        "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
+    ],
+    "Data Engineer": [
+        "CƠ SỞ DỮ LIỆU",
+        "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
+    ],
+    "AI Engineer": [
+        "TOÁN RỜI RẠC",
+        "XỬ LÝ TÍN HIỆU SỐ",
+        "XỬ LÝ ẢNH",
+        "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
+    ],
+    "Security Engineer": [
+        "AN NINH MẠNG",
+        "AN TOÀN VÀ BẢO MẬT HTTT",
+        "MẠNG MÁY TÍNH",
+        "QUẢN TRỊ MẠNG MÁY TÍNH",
+    ],
+    "System/DevOps": [
+        "HỆ ĐIỀU HÀNH",
+        "HỆ ĐIỀU HÀNH LINUX",
+        "KIẾN TRÚC MÁY TÍNH",
+    ],
 }
 
-# Danh sách feature cơ bản (có thể tự động mở rộng theo file thực tế)
-DEFAULT_FEATURE_COLUMNS: list[str] = ["Toan_Roi_Rac", "Lap_Trinh_C", "Co_So_Du_Lieu"]
-TARGET_COLUMN: str = "Chuyen_Nganh"
+DEFAULT_LABEL: str = "Software Engineer"
 
 
 # ============================================================
 # FUNCTIONS
 # ============================================================
 def load_raw_data(filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
-    """Load raw CSV dataset from possible paths."""
-    possible_paths = [
-        filepath,
-        os.path.join("data", "raw", "student-mat.csv"),
-        os.path.join("data", "raw", "DSS_Chuyen_Nganh_Chinh_Xac.csv"),
-        "student-mat.csv"
-    ]
-
-    for path in possible_paths:
-        if os.path.exists(path):
-            print(f"      --> Tải dữ liệu thành công từ: {path}")
-            try:
-                df = pd.read_csv(path, encoding='utf-8-sig')
-                if len(df.columns) == 1:
-                    df = pd.read_csv(path, sep=';', encoding='utf-8-sig')
-            except Exception:
-                df = pd.read_csv(path, sep=';', encoding='utf-8-sig')
-            return df
-
-    raise FileNotFoundError(
-        f"Không tìm thấy file dữ liệu đầu vào. Vui lòng kiểm tra lại đường dẫn file CSV trong thư mục data."
-    )
+    """Load raw CSV dataset extracted from PDFs."""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(
+            f"Không tìm thấy file dữ liệu tại: {filepath}. "
+            f"Hãy chạy pdf_extractor.py trước."
+        )
+    df = pd.read_csv(filepath, encoding='utf-8-sig')
+    return df
 
 
-def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
-    """Handle missing values by filling missing scores with 0.0 instead of dropping rows."""
-    df_cleaned = df.copy()
-    score_cols = [col for col in df_cleaned.columns if 'điểm' in col.lower() or 'diem' in col.lower()]
+def clean_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean data: ensure numeric scores, fill NaN with 0.0."""
+    df_clean = df.copy()
 
-    # Điền giá trị 0.0 cho các môn bị thiếu điểm thay vì xóa dòng
-    if score_cols:
-        df_cleaned[score_cols] = df_cleaned[score_cols].fillna(0.0)
+    # Identify score columns (all except metadata)
+    score_cols = [c for c in df_clean.columns if c not in NON_FEATURE_COLUMNS]
 
-    # Loại bỏ các dòng hoàn toàn không có tên sinh viên
-    for name_col in ['Họ và tên', 'Họ y tên', 'Ho va ten', 'Ten']:
-        if name_col in df_cleaned.columns:
-            df_cleaned = df_cleaned.dropna(subset=[name_col])
-            break
+    for col in score_cols:
+        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0.0).round(1)
 
-    return df_cleaned
-
-
-def rename_and_select_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Select relevant columns and rename to FIT-HAU standard names."""
-    df_renamed = df.rename(columns=COLUMN_MAPPING)
-
-    # Lấy tự động tất cả các cột điểm sau khi map hoặc giữ lại các cột số (trừ target)
-    # Giúp linh hoạt khi file mới có nhiều cột hơn
-    potential_features = [col for col in df_renamed.columns if col != TARGET_COLUMN and col not in ['Họ và tên', 'MSSV', 'STT']]
-
-    # Đảm bảo các cột feature quan trọng luôn tồn tại nếu có
-    cols_to_keep = potential_features if len(potential_features) > 0 else DEFAULT_FEATURE_COLUMNS
-
-    if TARGET_COLUMN in df_renamed.columns:
-        if TARGET_COLUMN not in cols_to_keep:
-            cols_to_keep.append(TARGET_COLUMN)
-
-    # Chỉ lấy những cột thực sự có trong dataframe để tránh lỗi KeyError
-    valid_cols = [col for col in cols_to_keep if col in df_renamed.columns]
-    return df_renamed[valid_cols].copy()
-
-
-def normalize_scores(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure all score features are numeric and within 0-10 scale."""
-    df_norm = df.copy()
-    # Lấy tất cả các cột trừ cột target ra để normalize dạng số điểm
-    feature_cols = [col for col in df_norm.columns if col != TARGET_COLUMN]
-
-    for col in feature_cols:
-        df_norm[col] = pd.to_numeric(df_norm[col], errors='coerce').fillna(0.0).round(1)
-    return df_norm
+    return df_clean
 
 
 def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
-    """Assign major labels based on normalized scores using vectorized conditions."""
+    """Assign career path labels based on Skill Matrix.
+
+    Logic:
+        1. For each student, compute the mean score for each career group.
+        2. The group with the highest mean score (and > 0) gets assigned.
+        3. If all groups have mean 0 → assign DEFAULT_LABEL.
+
+    NOTE: This function is MODULAR — you can replace the logic below
+    with K-Means clustering in the future without changing any other file.
+    """
     df_labeled = df.copy()
+    labels = []
 
-    if TARGET_COLUMN in df_labeled.columns and not df_labeled[TARGET_COLUMN].isnull().all():
-        return df_labeled
+    # Pre-filter: only use columns that actually exist in the DataFrame
+    valid_matrix: dict[str, list[str]] = {}
+    for career, subjects in SKILL_MATRIX.items():
+        valid_subjects = [s for s in subjects if s in df_labeled.columns]
+        if valid_subjects:
+            valid_matrix[career] = valid_subjects
 
-    # Xác định các cột để xét điều kiện gán nhãn linh hoạt theo các cột đang có
-    col_toan = "Toan_Roi_Rac" if "Toan_Roi_Rac" in df_labeled.columns else df_labeled.columns[0]
-    col_laptrinh = "Lap_Trinh_C" if "Lap_Trinh_C" in df_labeled.columns else (df_labeled.columns[1] if len(df_labeled.columns) > 1 else df_labeled.columns[0])
+    for _, row in df_labeled.iterrows():
+        best_career = DEFAULT_LABEL
+        best_avg = 0.0
 
-    conditions = [
-        (df_labeled[col_toan] < 5.0) | (df_labeled[col_laptrinh] < 5.0),
-        (df_labeled[col_toan] >= 6.5) & (df_labeled[col_toan] >= df_labeled[col_laptrinh]),
-        (df_labeled[col_laptrinh] >= 6.5)
-    ]
-    choices = ["Cảnh báo", "AI", "SE"]
+        for career, subjects in valid_matrix.items():
+            scores = [row[s] for s in subjects if row[s] > 0]
+            if scores:
+                avg = sum(scores) / len(scores)
+                if avg > best_avg:
+                    best_avg = avg
+                    best_career = career
 
-    df_labeled[TARGET_COLUMN] = np.select(conditions, choices, default="SE")
+        labels.append(best_career)
+
+    df_labeled[TARGET_COLUMN] = labels
     return df_labeled
+
+
+def prepare_for_training(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove metadata columns, keep only score features + target label."""
+    cols_to_drop = [c for c in NON_FEATURE_COLUMNS if c in df.columns]
+    df_final = df.drop(columns=cols_to_drop)
+    return df_final
 
 
 def run_pipeline() -> pd.DataFrame:
     """Execute the full data pipeline end-to-end."""
     print("=" * 60)
-    print("🚀 DSS FIT-HAU — Data Pipeline")
+    print("🚀 DSS FIT-HAU — Data Pipeline v2")
     print("=" * 60)
 
     # Step 1: Load
-    print("\n[1/5] Loading raw data...")
+    print("\n[1/4] Loading raw data...")
     df = load_raw_data()
     print(f"      ✅ Loaded {len(df)} rows, {len(df.columns)} columns")
 
-    # Step 2: Missing values
-    print("\n[2/5] Handling missing values...")
-    df = handle_missing_values(df)
-    print(f"      ✅ Rows retained: {len(df)} (filled missing scores with 0.0)")
+    # Step 2: Clean
+    print("\n[2/4] Cleaning data...")
+    df = clean_data(df)
+    score_cols = [c for c in df.columns if c not in NON_FEATURE_COLUMNS]
+    non_zero_count = (df[score_cols] > 0).any(axis=1).sum()
+    print(f"      ✅ Students with at least 1 score > 0: {non_zero_count}/{len(df)}")
 
-    # Step 3: Feature mapping
-    print("\n[3/5] Renaming & selecting features...")
-    df = rename_and_select_features(df)
-    print(f"      ✅ Columns mapped: {list(df.columns)}")
-
-    # Step 4: Normalize
-    print("\n[4/5] Normalizing scores...")
-    df = normalize_scores(df)
-    feature_cols_current = [col for col in df.columns if col != TARGET_COLUMN]
-    min_val = df[feature_cols_current].min().min() if feature_cols_current else 0.0
-    max_val = df[feature_cols_current].max().max() if feature_cols_current else 0.0
-    print(f"      ✅ Score range: {min_val:.1f} — {max_val:.1f}")
-
-    # Step 5: Label
-    print("\n[5/5] Assigning major labels...")
+    # Step 3: Label
+    print("\n[3/4] Assigning career labels (Skill Matrix)...")
     df = assign_labels(df)
-    print(f"      ✅ Label distribution:\n{df[TARGET_COLUMN].value_counts().to_string()}")
+    print(f"      ✅ Label distribution:")
+    print(df[TARGET_COLUMN].value_counts().to_string(header=False))
+
+    # Step 4: Prepare for training (remove metadata)
+    print("\n[4/4] Preparing for training...")
+    df_final = prepare_for_training(df)
+    feature_cols = [c for c in df_final.columns if c != TARGET_COLUMN]
+    print(f"      ✅ Features: {len(feature_cols)} subjects")
+    print(f"      ✅ Target: {TARGET_COLUMN}")
 
     # Export
     os.makedirs(os.path.dirname(PROCESSED_DATA_PATH), exist_ok=True)
-    df.to_csv(PROCESSED_DATA_PATH, index=False, encoding="utf-8-sig")
-    print(f"\n💾 Saved → {PROCESSED_DATA_PATH}")
+    df_final.to_csv(PROCESSED_DATA_PATH, index=False, encoding="utf-8-sig")
+    print(f"\n  💾 Saved → {PROCESSED_DATA_PATH}")
+    print(f"  📐 Shape: {df_final.shape[0]} rows × {df_final.shape[1]} columns")
     print("=" * 60)
 
-    return df
+    return df_final
 
 
 # ============================================================
