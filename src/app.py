@@ -11,7 +11,8 @@ Features:
 
 Architecture:
     - KHÔNG có logic training — chỉ load model .pkl và gọi predict()
-    - Zero-Trust Validation trên mọi input
+    - Form nhập liệu ĐỘNG theo feature_names_in_ của mô hình
+    - Horizontal Bar Chart trực quan hóa điểm
     - Explainable AI qua decision_path
 """
 
@@ -29,92 +30,143 @@ MODEL_PATH: str = os.path.join("models", "dss_brain.pkl")
 CONFUSION_MATRIX_PATH: str = os.path.join("reports", "dss_confusion_matrix.png")
 TREE_PLOT_PATH: str = os.path.join("reports", "dss_tree.png")
 
-FEATURE_COLUMNS: list[str] = ["Toan_Roi_Rac", "Lap_Trinh_C", "Co_So_Du_Lieu"]
-FEATURE_LABELS: list[str] = ["Toán Rời Rạc", "Lập Trình C", "Cơ Sở Dữ Liệu"]
-
 MAX_SCORE: float = 10.0
 MIN_SCORE: float = 0.0
 
 
 # ============================================================
-# MODEL LOADING (cached — load once into RAM)
+# MODEL LOADING (cached)
 # ============================================================
 @st.cache_resource
 def load_model():
-    """Load trained Decision Tree model from .pkl file.
-
-    Uses @st.cache_resource to avoid reloading on every rerun.
-    """
-    # TODO: Sprint 3 - Task 1
-    raise NotImplementedError("Sprint 3: Implement model loading")
+    """Load trained Decision Tree model from .pkl file."""
+    if not os.path.exists(MODEL_PATH):
+        st.error(f"Lỗi: Không tìm thấy file mô hình tại `{MODEL_PATH}`. Vui lòng huấn luyện mô hình trước.")
+        st.stop()
+    try:
+        model = joblib.load(MODEL_PATH)
+        return model
+    except Exception as e:
+        st.error(f"Lỗi khi nạp mô hình: {e}")
+        st.stop()
 
 
 # ============================================================
 # VALIDATION
 # ============================================================
 def validate_scores(scores: dict[str, float]) -> bool:
-    """Zero-Trust validation: block invalid scores immediately.
-
-    Rules:
-        - All scores must be >= 0.0 and <= 10.0
-        - Calls st.stop() on violation
-    """
-    # TODO: Sprint 3 - Task 2
-    raise NotImplementedError("Sprint 3 - Task 2: Implement input validation")
+    """Zero-Trust validation: block invalid scores immediately."""
+    for subject, score in scores.items():
+        if score < MIN_SCORE or score > MAX_SCORE:
+            st.error(f"🚨 Điểm số không hợp lệ ở môn {subject}: {score}. Vui lòng nhập điểm từ {MIN_SCORE} đến {MAX_SCORE}.")
+            st.stop()
+    return True
 
 
 # ============================================================
 # EXPLAINABLE AI (XAI)
 # ============================================================
 def explain_decision(model, input_data: pd.DataFrame) -> str:
-    """Trace the decision_path of the Decision Tree and translate to Vietnamese.
-
-    Returns:
-        str: Human-readable explanation of the AI's reasoning.
-    """
-    # TODO: Sprint 3 - Task 3
-    raise NotImplementedError("Sprint 3 - Task 3: Implement XAI decision path")
+    """Trace the decision_path of the Decision Tree and extract logic."""
+    node_indicator = model.decision_path(input_data)
+    leaf_id = model.apply(input_data)
+    
+    feature = model.tree_.feature
+    threshold = model.tree_.threshold
+    feature_names = model.feature_names_in_
+    
+    sample_id = 0
+    node_index = node_indicator.indices[node_indicator.indptr[sample_id] : node_indicator.indptr[sample_id + 1]]
+    
+    explanation_steps = []
+    
+    for node_id in node_index:
+        if leaf_id[sample_id] == node_id:
+            continue
+            
+        feature_idx = feature[node_id]
+        if feature_idx >= len(feature_names) or feature_idx < 0:
+            continue
+            
+        subject_name = feature_names[feature_idx]
+        feature_val = input_data.iloc[sample_id, feature_idx]
+        thres = threshold[node_id]
+        
+        if feature_val <= thres:
+            explanation_steps.append(f"Vì điểm {subject_name} ({feature_val:.2f}) <= {thres:.2f}")
+        else:
+            explanation_steps.append(f"Vì điểm {subject_name} ({feature_val:.2f}) > {thres:.2f}")
+            
+    if explanation_steps:
+        return " ➔ ".join(explanation_steps)
+    return "Không thể phân tích đường ra quyết định."
 
 
 # ============================================================
 # VISUALIZATION
 # ============================================================
-def create_radar_chart(scores: dict[str, float]) -> go.Figure:
-    """Create a Radar Chart visualizing student skill profile.
+def create_bar_chart(scores: dict[str, float]) -> go.Figure:
+    """Create a Horizontal Bar Chart visualizing student scores."""
+    # Sắp xếp điểm giảm dần
+    sorted_scores = dict(sorted(scores.items(), key=lambda item: item[1]))
+    
+    subjects = list(sorted_scores.keys())
+    values = list(sorted_scores.values())
 
-    Uses Plotly for interactive chart.
-    """
-    # TODO: Sprint 3 - Task 1 (part of UI)
-    raise NotImplementedError("Sprint 3: Implement radar chart")
+    fig = go.Figure(go.Bar(
+        x=values,
+        y=subjects,
+        orientation='h',
+        marker=dict(
+            color=values,
+            colorscale='Viridis',
+            showscale=True
+        ),
+        text=[f"{v:.1f}" for v in values],
+        textposition='auto'
+    ))
+
+    fig.update_layout(
+        title="Biểu đồ Năng lực Học tập",
+        xaxis_title="Điểm số",
+        xaxis=dict(range=[0, 10]),
+        height=max(400, len(subjects) * 30), # Chiều cao linh hoạt theo số môn
+        margin=dict(l=200, r=20, t=40, b=20)
+    )
+    return fig
 
 
 # ============================================================
 # EXPORT
 # ============================================================
 def generate_excel_report(student_data: dict, prediction: str, explanation: str) -> bytes:
-    """Generate an Excel report in-memory using io.BytesIO().
-
-    MUST NOT save physical file to disk — use RAM buffer only.
-
-    Returns:
-        bytes: Excel file content for download.
-    """
-    # TODO: Sprint 3 - Task from Epic 4
-    raise NotImplementedError("Sprint 3: Implement Excel export")
+    """Generate an Excel report in-memory using io.BytesIO()."""
+    df = pd.DataFrame([student_data])
+    df["Dự đoán chuyên ngành"] = prediction
+    df["Giải thích (XAI)"] = explanation
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Ket_Qua_Tu_Van')
+    
+    processed_data = output.getvalue()
+    return processed_data
 
 
 # ============================================================
 # MAIN APP
 # ============================================================
 def main() -> None:
-    """Main Streamlit application entry point."""
-
     # --- Page Config ---
     st.set_page_config(
         page_title="DSS FIT-HAU — Trợ Giúp Quyết Định Học Tập",
         page_icon="🎓",
         layout="wide",
     )
+
+    # Nạp mô hình AI
+    model = load_model()
+    features = model.feature_names_in_
 
     # --- Sidebar ---
     with st.sidebar:
@@ -126,7 +178,7 @@ def main() -> None:
 
     # --- Main Content ---
     st.title("🎓 Hệ Trợ Giúp Quyết Định Học Tập")
-    st.markdown("Nhập điểm 3 môn nền tảng để nhận gợi ý chuyên ngành phù hợp.")
+    st.markdown(f"Nhập điểm {len(features)} môn nền tảng để nhận gợi ý chuyên ngành phù hợp.")
 
     # --- Tabs ---
     tab1, tab2 = st.tabs(["🧭 Trợ Giúp Quyết Định", "📊 Phân Tích Mô Hình"])
@@ -135,15 +187,64 @@ def main() -> None:
         st.subheader("Nhập điểm số")
         st.info("💡 Nhập điểm từ 0.0 đến 10.0 cho từng môn học.")
 
-        # TODO: Sprint 3 — Implement score input form, prediction, XAI display,
-        #       radar chart, and Excel download button here.
-        st.warning("⚠️ Module đang trong quá trình phát triển (Sprint 3)")
+        # Render form động theo danh sách features từ mô hình
+        scores_dict = {}
+        cols = st.columns(3) # Hiển thị thành 3 cột
+        for i, feature in enumerate(features):
+            with cols[i % 3]:
+                scores_dict[feature] = st.number_input(
+                    feature, 
+                    min_value=MIN_SCORE, 
+                    max_value=MAX_SCORE, 
+                    value=0.0, 
+                    step=0.1,
+                    key=f"input_{feature}"
+                )
+            
+        if st.button("🔍 Phân tích & Gợi ý", type="primary"):
+            # Zero-trust validation
+            validate_scores(scores_dict)
+            
+            input_df = pd.DataFrame([scores_dict])
+            
+            # Dự đoán
+            prediction = model.predict(input_df)[0]
+            explanation = explain_decision(model, input_df)
+            
+            st.divider()
+            st.subheader("🎯 Kết quả Tư vấn")
+            st.success(f"**Chuyên ngành phù hợp nhất:** {prediction}")
+            
+            st.markdown("### 🧠 Giải thích đường ra quyết định (XAI)")
+            st.code(explanation, language="markdown")
+            
+            # Biểu đồ điểm số
+            bar_fig = create_bar_chart(scores_dict)
+            st.plotly_chart(bar_fig, use_container_width=True)
+            
+            # Xuất Excel
+            excel_bytes = generate_excel_report(scores_dict, prediction, explanation)
+            st.download_button(
+                label="📥 Tải xuống Báo cáo Excel",
+                data=excel_bytes,
+                file_name="DSS_Report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
     with tab2:
         st.subheader("📊 Phân Tích Mô Hình AI")
-
-        # TODO: Sprint 3 - Task 4 — Display confusion matrix and tree plot images
-        st.warning("⚠️ Module đang trong quá trình phát triển (Sprint 3)")
+        
+        st.markdown("#### Ma trận nhầm lẫn (Confusion Matrix)")
+        if os.path.exists(CONFUSION_MATRIX_PATH):
+            st.image(CONFUSION_MATRIX_PATH, use_container_width=True)
+        else:
+            st.warning("Không tìm thấy ảnh Confusion Matrix.")
+            
+        st.markdown("#### Cấu trúc Cây quyết định (Tree Plot)")
+        if os.path.exists(TREE_PLOT_PATH):
+            st.image(TREE_PLOT_PATH, use_container_width=True)
+        else:
+            st.warning("Không tìm thấy ảnh Tree Plot.")
 
 
 if __name__ == "__main__":

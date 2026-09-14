@@ -1,12 +1,12 @@
 # Project Context — DSS FIT-HAU (Personal Decision Support System)
 
 ## 1. Project Overview
-- **Hệ thống:** Ứng dụng Học máy cảnh báo và định hướng học tập cho sinh viên FIT-HAU.
-- **Mục tiêu:** Cung cấp Hệ trợ giúp quyết định cá nhân (Personal DSS) phân tích điểm số nền tảng (Toán Rời Rạc, Lập Trình C, Cơ Sở Dữ Liệu) để gợi ý chuyên ngành (AI, SE, Cảnh báo học vụ).
+- **Hệ thống:** Ứng dụng Học máy định hướng nghề nghiệp cho sinh viên CNTT FIT-HAU.
+- **Mục tiêu:** Cung cấp Hệ trợ giúp quyết định cá nhân (Personal DSS) phân tích điểm số của 20 môn chuyên ngành CNTT để gợi ý 5 hướng nghề nghiệp (Software Engineer, Data Engineer, AI Engineer, Security Engineer, System/DevOps).
 - **Kiến trúc khép kín:** Phân tách hoàn toàn 2 môi trường:
   1. Offline Training (Huấn luyện ngoại tuyến, xuất model).
   2. Online Inference (Giao diện Web, nạp model để suy diễn).
-- **Roadmap MVP:** Data Preprocessing → GridSearchCV Model Training → Streamlit Dashboard.
+- **Roadmap MVP:** Trích xuất điểm từ PDF bảng điểm → Data Pipeline (Heuristic Labeling) → GridSearchCV Model Training → Streamlit Dashboard.
 - **Ưu tiên cốt lõi:** Code sạch, dễ mở rộng, Explainable AI (XAI - Trực quan hóa luồng suy luận), và Bảo mật dữ liệu đầu vào (Validation).
 
 ## 2. Project Structure
@@ -15,12 +15,13 @@
   ```
   fit-hau-dss/
   ├── data/                              → Thư mục chứa dữ liệu
-  │   ├── raw/                           → Data Kaggle thô (student-mat.csv)
-  │   └── processed/                     → Data đã làm sạch (FIT_HAU_Cleaned.csv)
+  │   ├── raw/                           → Data điểm từ PDF hoặc file CSV thô
+  │   └── processed/                     → Data đã gán nhãn 5 nghề nghiệp (FIT_HAU_Cleaned.csv)
   ├── src/                               → Mã nguồn lõi
-  │   ├── data_pipeline.py               → Xử lý dữ liệu & Labeling
+  │   ├── pdf_extractor.py               → Trích xuất và gom bảng điểm từ hàng trăm file PDF
+  │   ├── data_pipeline.py               → Tiền xử lý dữ liệu & Gán nhãn theo Skill Matrix
   │   ├── train_core.py                  → Huấn luyện DecisionTree & Hyperparameter tuning
-  │   └── app.py                         → Streamlit UI (Main App)
+  │   └── app.py                         → Streamlit UI (Dynamic 20 subjects Form)
   ├── models/                            → Tri thức AI
   │   └── dss_brain.pkl                  → Model đã huấn luyện (Joblib)
   ├── reports/                           → Biểu đồ đánh giá
@@ -67,9 +68,9 @@
 
 ## 7. Module-specific Rules
 ### Data Engineering Module
-- **Xử lý Missing Values:** Cần có báo cáo số dòng bị xóa/điền.
-- **Feature Mapping:** Hard-code việc đổi tên G1, G2, G3 thành Toan_Roi_Rac, Lap_Trinh_C, Co_So_Du_Lieu.
-- **Visualization:** Radar Chart cho kỹ năng cá nhân (Radar Plotly).
+- **Xử lý Missing Values:** Điền 0.0 cho các môn sinh viên không học.
+- **Feature Mapping:** Sử dụng `pdf_extractor.py` để lấy tên tiếng Việt chuẩn của môn học. Gán nhãn qua `SKILL_MATRIX` (5 cụm nghề nghiệp).
+- **Visualization:** Horizontal Bar Chart (Plotly) trực quan hóa điểm 20 môn.
 - **Caching:** Bắt buộc dùng `@st.cache_resource` khi load model để tránh tràn RAM server.
 - **Export:** Sử dụng `io.BytesIO()` để tạo file Excel ảo trên RAM trước khi gọi nút Download, không lưu file Excel vật lý ra ổ cứng.
 
