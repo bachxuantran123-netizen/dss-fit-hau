@@ -94,18 +94,20 @@ def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd
     os.makedirs(os.path.dirname(CONFUSION_MATRIX_PATH), exist_ok=True)
     
     # 1. Sinh và lưu Confusion Matrix
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     ConfusionMatrixDisplay.from_estimator(clf, X_test, y_test, ax=ax, cmap='Blues')
-    plt.title("Confusion Matrix")
+    plt.xticks(rotation=45, ha="right")  # Xoay nhãn trục x để không bị đè lên nhau
+    plt.title("Ma trận nhầm lẫn (Confusion Matrix)")
     plt.tight_layout()
     plt.savefig(CONFUSION_MATRIX_PATH, dpi=300)
     plt.close()
     print(f"      💾 Saved Confusion Matrix -> {CONFUSION_MATRIX_PATH}")
 
     # 2. Sinh và lưu Sơ đồ cây (Tree Plot)
-    fig, ax = plt.subplots(figsize=(15, 10))
-    plot_tree(clf, feature_names=FEATURE_COLUMNS, class_names=clf.classes_, filled=True, rounded=True, ax=ax, fontsize=10)
-    plt.title("Decision Tree Architecture")
+    fig, ax = plt.subplots(figsize=(20, 10))
+    # Giới hạn max_depth=3 để cây không bị rối rắm trên hình vẽ
+    plot_tree(clf, feature_names=FEATURE_COLUMNS, class_names=clf.classes_, filled=True, rounded=True, ax=ax, fontsize=10, max_depth=3)
+    plt.title("Cấu trúc Cây Quyết Định (Top 3 Levels)")
     plt.tight_layout()
     plt.savefig(TREE_PLOT_PATH, dpi=300)
     plt.close()
