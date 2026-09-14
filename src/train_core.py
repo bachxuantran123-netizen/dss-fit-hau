@@ -9,15 +9,18 @@ import os
 import joblib
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 # ============================================================
 # CONSTANTS
 # ============================================================
 PROCESSED_DATA_PATH: str = os.path.join("data", "processed", "FIT_HAU_Cleaned.csv")
 MODEL_SAVE_PATH: str = os.path.join("models", "decision_tree_model.pkl")
+CONFUSION_MATRIX_PATH: str = os.path.join("reports", "dss_confusion_matrix.png")
+TREE_PLOT_PATH: str = os.path.join("reports", "dss_tree.png")
 
 TARGET_COLUMN: str = "Chuyen_Nganh"
 FEATURE_COLUMNS: list[str] = []  # Sẽ được tự động cập nhật dựa trên dữ liệu thực tế
@@ -57,14 +60,23 @@ def split_data(df: pd.DataFrame):
 
 
 def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> DecisionTreeClassifier:
-    """Khởi tạo và huấn luyện mô hình Decision Tree Classifier."""
-    clf = DecisionTreeClassifier(random_state=42, max_depth=6)
-    clf.fit(X_train, y_train)
-    return clf
+    """Khởi tạo và huấn luyện mô hình Decision Tree Classifier với GridSearchCV."""
+    param_grid = {
+        'max_depth': [3, 4, 5, 6, 7, 8, None],
+        'criterion': ['gini', 'entropy'],
+        'min_samples_split': [2, 5, 10]
+    }
+    
+    base_clf = DecisionTreeClassifier(random_state=42)
+    grid_search = GridSearchCV(estimator=base_clf, param_grid=param_grid, cv=5, scoring='accuracy', n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+    
+    print(f"      ✅ Best parameters: {grid_search.best_params_}")
+    return grid_search.best_estimator_
 
 
 def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd.Series):
-    """Đánh giá hiệu suất mô hình trên tập test."""
+    """Đánh giá hiệu suất mô hình trên tập test và lưu các biểu đồ."""
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
@@ -73,6 +85,28 @@ def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd
     print("-" * 50)
     print(classification_report(y_test, y_pred, zero_division=0))
     print("-" * 50)
+    
+    # Tạo thư mục reports nếu chưa tồn tại
+    os.makedirs(os.path.dirname(CONFUSION_MATRIX_PATH), exist_ok=True)
+    
+    # 1. Sinh và lưu Confusion Matrix
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ConfusionMatrixDisplay.from_estimator(clf, X_test, y_test, ax=ax, cmap='Blues')
+    plt.title("Confusion Matrix")
+    plt.tight_layout()
+    plt.savefig(CONFUSION_MATRIX_PATH, dpi=300)
+    plt.close()
+    print(f"      💾 Saved Confusion Matrix -> {CONFUSION_MATRIX_PATH}")
+
+    # 2. Sinh và lưu Sơ đồ cây (Tree Plot)
+    fig, ax = plt.subplots(figsize=(15, 10))
+    plot_tree(clf, feature_names=FEATURE_COLUMNS, class_names=clf.classes_, filled=True, rounded=True, ax=ax, fontsize=10)
+    plt.title("Decision Tree Architecture")
+    plt.tight_layout()
+    plt.savefig(TREE_PLOT_PATH, dpi=300)
+    plt.close()
+    print(f"      💾 Saved Tree Plot -> {TREE_PLOT_PATH}")
+
     return acc
 
 
