@@ -1,19 +1,12 @@
 """
 data_pipeline.py — Sprint 1: Data Preprocessing & Labeling
 ===========================================================
-Module xử lý dữ liệu thô từ Kaggle (Student Performance Dataset)
-và chuyển đổi sang định dạng FIT-HAU phục vụ huấn luyện Decision Tree.
-
-Pipeline:
-    1. Load raw CSV (student-mat.csv)
-    2. Xử lý Missing Values
-    3. Chọn lọc & đổi tên Feature (G1, G2, G3 → Toán Rời Rạc, Lập Trình C, CSDL)
-    4. Quy đổi thang điểm 20 → thang 10
-    5. Gán nhãn chuyên ngành (AI, SE, Cảnh báo)
-    6. Xuất file CSV sạch → data/processed/FIT_HAU_Cleaned.csv
+Module xử lý dữ liệu điểm sinh viên thực tế (Tiếng Việt)
+và chuyển đổi sang định dạng chuẩn FIT-HAU phục vụ huấn luyện Decision Tree.
 """
 
 import os
+import numpy as np
 import pandas as pd
 
 # ============================================================
@@ -24,17 +17,19 @@ PROCESSED_DATA_PATH: str = os.path.join("data", "processed", "FIT_HAU_Cleaned.cs
 
 MAX_SCORE: float = 10.0
 MIN_SCORE: float = 0.0
-KAGGLE_MAX_SCORE: float = 20.0
 
-# Mapping Kaggle columns → FIT-HAU column names
+# Mở rộng ánh xạ cho tất cả các cột có thể xuất hiện trong file mới của bạn
 COLUMN_MAPPING: dict[str, str] = {
-    "G1": "Toan_Roi_Rac",
-    "G2": "Lap_Trinh_C",
-    "G3": "Co_So_Du_Lieu",
+    "điểm Toán rời rạc": "Toan_Roi_Rac",
+    "điểm kĩ thuật lập trình": "Lap_Trinh_C",
+    "điểm kỹ thuật lập trình": "Lap_Trinh_C",
+    "điểm CSDL": "Co_So_Du_Lieu",
+    "điểm Cơ sở dữ liệu": "Co_So_Du_Lieu",
+    "Chuyên Ngành": "Chuyen_Nganh"
 }
 
-# Features used for training
-FEATURE_COLUMNS: list[str] = list(COLUMN_MAPPING.values())
+# Danh sách feature cơ bản (có thể tự động mở rộng theo file thực tế)
+DEFAULT_FEATURE_COLUMNS: list[str] = ["Toan_Roi_Rac", "Lap_Trinh_C", "Co_So_Du_Lieu"]
 TARGET_COLUMN: str = "Chuyen_Nganh"
 
 
@@ -42,73 +37,103 @@ TARGET_COLUMN: str = "Chuyen_Nganh"
 # FUNCTIONS
 # ============================================================
 def load_raw_data(filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
-    """Load raw CSV dataset from Kaggle."""
-    if not os.path.exists(filepath):
-        print(f"File {filepath} không tồn tại. Tiến hành tải tự động từ UCI repository...")
-        import urllib.request
-        import zipfile
-        url = "https://archive.ics.uci.edu/ml/machine-learning-databases/00320/student.zip"
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        zip_path = os.path.join(os.path.dirname(filepath), "student.zip")
-        urllib.request.urlretrieve(url, zip_path)
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extract("student-mat.csv", os.path.dirname(filepath))
-        os.remove(zip_path)
-        
-    # Dataset Student Performance thường dùng dấu chấm phẩy ';' làm delimiter
-    return pd.read_csv(filepath, sep=';')
+    """Load raw CSV dataset from possible paths."""
+    possible_paths = [
+        filepath,
+        os.path.join("data", "raw", "student-mat.csv"),
+        os.path.join("data", "raw", "DSS_Chuyen_Nganh_Chinh_Xac.csv"),
+        "student-mat.csv"
+    ]
+
+    for path in possible_paths:
+        if os.path.exists(path):
+            print(f"      --> Tải dữ liệu thành công từ: {path}")
+            try:
+                df = pd.read_csv(path, encoding='utf-8-sig')
+                if len(df.columns) == 1:
+                    df = pd.read_csv(path, sep=';', encoding='utf-8-sig')
+            except Exception:
+                df = pd.read_csv(path, sep=';', encoding='utf-8-sig')
+            return df
+
+    raise FileNotFoundError(
+        f"Không tìm thấy file dữ liệu đầu vào. Vui lòng kiểm tra lại đường dẫn file CSV trong thư mục data."
+    )
 
 
 def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
-    """Handle missing values and report dropped/filled rows."""
-    return df.dropna()
+    """Handle missing values by filling missing scores with 0.0 instead of dropping rows."""
+    df_cleaned = df.copy()
+    score_cols = [col for col in df_cleaned.columns if 'điểm' in col.lower() or 'diem' in col.lower()]
+
+    # Điền giá trị 0.0 cho các môn bị thiếu điểm thay vì xóa dòng
+    if score_cols:
+        df_cleaned[score_cols] = df_cleaned[score_cols].fillna(0.0)
+
+    # Loại bỏ các dòng hoàn toàn không có tên sinh viên
+    for name_col in ['Họ và tên', 'Họ y tên', 'Ho va ten', 'Ten']:
+        if name_col in df_cleaned.columns:
+            df_cleaned = df_cleaned.dropna(subset=[name_col])
+            break
+
+    return df_cleaned
 
 
 def rename_and_select_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Select relevant columns (G1, G2, G3) and rename to FIT-HAU names."""
-    df_selected = df[["G1", "G2", "G3"]].copy()
-    return df_selected.rename(columns=COLUMN_MAPPING)
+    """Select relevant columns and rename to FIT-HAU standard names."""
+    df_renamed = df.rename(columns=COLUMN_MAPPING)
+
+    # Lấy tự động tất cả các cột điểm sau khi map hoặc giữ lại các cột số (trừ target)
+    # Giúp linh hoạt khi file mới có nhiều cột hơn
+    potential_features = [col for col in df_renamed.columns if col != TARGET_COLUMN and col not in ['Họ và tên', 'MSSV', 'STT']]
+
+    # Đảm bảo các cột feature quan trọng luôn tồn tại nếu có
+    cols_to_keep = potential_features if len(potential_features) > 0 else DEFAULT_FEATURE_COLUMNS
+
+    if TARGET_COLUMN in df_renamed.columns:
+        if TARGET_COLUMN not in cols_to_keep:
+            cols_to_keep.append(TARGET_COLUMN)
+
+    # Chỉ lấy những cột thực sự có trong dataframe để tránh lỗi KeyError
+    valid_cols = [col for col in cols_to_keep if col in df_renamed.columns]
+    return df_renamed[valid_cols].copy()
 
 
 def normalize_scores(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert scores from Kaggle scale (0-20) to FIT-HAU scale (0-10).
+    """Ensure all score features are numeric and within 0-10 scale."""
+    df_norm = df.copy()
+    # Lấy tất cả các cột trừ cột target ra để normalize dạng số điểm
+    feature_cols = [col for col in df_norm.columns if col != TARGET_COLUMN]
 
-    Formula: score_10 = score_20 * (10 / 20)
-    Uses Pandas vectorization — NO for-loops allowed.
-    """
-    df[FEATURE_COLUMNS] = df[FEATURE_COLUMNS] * (MAX_SCORE / KAGGLE_MAX_SCORE)
-    return df
+    for col in feature_cols:
+        df_norm[col] = pd.to_numeric(df_norm[col], errors='coerce').fillna(0.0).round(1)
+    return df_norm
 
 
 def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
-    """Assign major labels based on normalized scores using hard-coded if-else rules.
+    """Assign major labels based on normalized scores using vectorized conditions."""
+    df_labeled = df.copy()
 
-    Labels:
-        - 'AI'       : Strong in math-heavy subjects
-        - 'SE'       : Strong in programming subjects
-        - 'Cảnh báo' : Below threshold — academic warning
-    """
-    def categorize(row):
-        # Nếu điểm trung bình < 5 -> Cảnh báo
-        if row[FEATURE_COLUMNS].mean() < 5.0:
-            return "Cảnh báo"
-        
-        # Nếu điểm Toán > Lập trình -> Hợp với AI hơn, ngược lại là SE
-        if row["Toan_Roi_Rac"] >= row["Lap_Trinh_C"]:
-            return "AI"
-        else:
-            return "SE"
+    if TARGET_COLUMN in df_labeled.columns and not df_labeled[TARGET_COLUMN].isnull().all():
+        return df_labeled
 
-    df[TARGET_COLUMN] = df.apply(categorize, axis=1)
-    return df
+    # Xác định các cột để xét điều kiện gán nhãn linh hoạt theo các cột đang có
+    col_toan = "Toan_Roi_Rac" if "Toan_Roi_Rac" in df_labeled.columns else df_labeled.columns[0]
+    col_laptrinh = "Lap_Trinh_C" if "Lap_Trinh_C" in df_labeled.columns else (df_labeled.columns[1] if len(df_labeled.columns) > 1 else df_labeled.columns[0])
+
+    conditions = [
+        (df_labeled[col_toan] < 5.0) | (df_labeled[col_laptrinh] < 5.0),
+        (df_labeled[col_toan] >= 6.5) & (df_labeled[col_toan] >= df_labeled[col_laptrinh]),
+        (df_labeled[col_laptrinh] >= 6.5)
+    ]
+    choices = ["Cảnh báo", "AI", "SE"]
+
+    df_labeled[TARGET_COLUMN] = np.select(conditions, choices, default="SE")
+    return df_labeled
 
 
 def run_pipeline() -> pd.DataFrame:
-    """Execute the full data pipeline end-to-end.
-
-    Returns:
-        pd.DataFrame: Cleaned and labeled dataset ready for training.
-    """
+    """Execute the full data pipeline end-to-end."""
     print("=" * 60)
     print("🚀 DSS FIT-HAU — Data Pipeline")
     print("=" * 60)
@@ -120,19 +145,21 @@ def run_pipeline() -> pd.DataFrame:
 
     # Step 2: Missing values
     print("\n[2/5] Handling missing values...")
-    rows_before = len(df)
     df = handle_missing_values(df)
-    print(f"      ✅ Rows: {rows_before} → {len(df)} (removed {rows_before - len(df)})")
+    print(f"      ✅ Rows retained: {len(df)} (filled missing scores with 0.0)")
 
     # Step 3: Feature mapping
     print("\n[3/5] Renaming & selecting features...")
     df = rename_and_select_features(df)
-    print(f"      ✅ Columns: {list(df.columns)}")
+    print(f"      ✅ Columns mapped: {list(df.columns)}")
 
     # Step 4: Normalize
-    print("\n[4/5] Normalizing scores (20 → 10)...")
+    print("\n[4/5] Normalizing scores...")
     df = normalize_scores(df)
-    print(f"      ✅ Score range: {df[FEATURE_COLUMNS].min().min():.1f} — {df[FEATURE_COLUMNS].max().max():.1f}")
+    feature_cols_current = [col for col in df.columns if col != TARGET_COLUMN]
+    min_val = df[feature_cols_current].min().min() if feature_cols_current else 0.0
+    max_val = df[feature_cols_current].max().max() if feature_cols_current else 0.0
+    print(f"      ✅ Score range: {min_val:.1f} — {max_val:.1f}")
 
     # Step 5: Label
     print("\n[5/5] Assigning major labels...")
