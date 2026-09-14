@@ -38,6 +38,7 @@ SUBJECT_MAPPING: dict[str, str] = {
     "kỹ thuật đồ hoạ": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
     "kỹ thuật xử lý ảnh": "XỬ LÝ ẢNH",
     "lập trình hướng": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
+    "lập trình hướng đối tượng": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
     "quản trị mạng máy tính": "QUẢN TRỊ MẠNG MÁY TÍNH",
     "quản trị mạng": "QUẢN TRỊ MẠNG MÁY TÍNH",
     "mạng máy tính": "MẠNG MÁY TÍNH",
