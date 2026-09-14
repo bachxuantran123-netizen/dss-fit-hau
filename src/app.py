@@ -239,10 +239,11 @@ def main() -> None:
             st.caption("Cách trí tuệ nhân tạo suy luận để đưa ra quyết định dựa trên bộ não Decision Tree:")
             
             if explanation_steps:
+                list_md = ""
                 for i, step in enumerate(explanation_steps):
                     emoji = "✅" if step['operator'] == ">" else "🔻"
-                    color = "green" if step['operator'] == ">" else "orange"
-                    st.info(f"{emoji} **Bước {i+1}:** Nhận thấy điểm môn **{step['subject']}** là `{step['score']:.1f}` (Thỏa mãn điều kiện rẽ nhánh `{step['operator']} {step['threshold']:.2f}`)")
+                    list_md += f"- {emoji} **Bước {i+1}:** Nhận thấy điểm môn **{step['subject']}** là `{step['score']:.1f}` (Thỏa mãn điều kiện rẽ nhánh `{step['operator']} {step['threshold']:.2f}`)\n"
+                st.info(list_md)
             else:
                 st.warning("Không thể phân tích đường ra quyết định.")
             
