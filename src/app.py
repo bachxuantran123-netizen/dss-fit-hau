@@ -66,7 +66,7 @@ def validate_scores(scores: dict[str, float]) -> bool:
 # ============================================================
 # EXPLAINABLE AI (XAI)
 # ============================================================
-def explain_decision(model, input_data: pd.DataFrame) -> str:
+def explain_decision(model, input_data: pd.DataFrame) -> list[dict]:
     """Trace the decision_path of the Decision Tree and extract logic."""
     node_indicator = model.decision_path(input_data)
     leaf_id = model.apply(input_data)
@@ -92,14 +92,15 @@ def explain_decision(model, input_data: pd.DataFrame) -> str:
         feature_val = input_data.iloc[sample_id, feature_idx]
         thres = threshold[node_id]
         
-        if feature_val <= thres:
-            explanation_steps.append(f"Vì điểm {subject_name} ({feature_val:.2f}) <= {thres:.2f}")
-        else:
-            explanation_steps.append(f"Vì điểm {subject_name} ({feature_val:.2f}) > {thres:.2f}")
+        condition = "<=" if feature_val <= thres else ">"
+        explanation_steps.append({
+            "subject": subject_name,
+            "score": feature_val,
+            "operator": condition,
+            "threshold": thres
+        })
             
-    if explanation_steps:
-        return " ➔ ".join(explanation_steps)
-    return "Không thể phân tích đường ra quyết định."
+    return explanation_steps
 
 
 # ============================================================
@@ -139,11 +140,18 @@ def create_bar_chart(scores: dict[str, float]) -> go.Figure:
 # ============================================================
 # EXPORT
 # ============================================================
-def generate_excel_report(student_data: dict, prediction: str, explanation: str) -> bytes:
+def generate_excel_report(student_data: dict, prediction: str, explanation_steps: list[dict]) -> bytes:
     """Generate an Excel report in-memory using io.BytesIO()."""
     df = pd.DataFrame([student_data])
     df["Dự đoán chuyên ngành"] = prediction
-    df["Giải thích (XAI)"] = explanation
+    
+    # Format list of dicts to string for excel
+    explanation_str = " ➔ ".join([
+        f"Vì {s['subject']} ({s['score']:.1f}) {s['operator']} {s['threshold']:.2f}" 
+        for s in explanation_steps
+    ]) if explanation_steps else "Không có giải thích"
+    
+    df["Giải thích (XAI)"] = explanation_str
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -209,21 +217,41 @@ def main() -> None:
             
             # Dự đoán
             prediction = model.predict(input_df)[0]
-            explanation = explain_decision(model, input_df)
+            probabilities = model.predict_proba(input_df)[0]
+            classes = model.classes_
+            explanation_steps = explain_decision(model, input_df)
             
             st.divider()
             st.subheader("🎯 Kết quả Tư vấn")
-            st.success(f"**Chuyên ngành phù hợp nhất:** {prediction}")
             
-            st.markdown("### 🧠 Giải thích đường ra quyết định (XAI)")
-            st.code(explanation, language="markdown")
+            # Khối kết quả chính
+            max_prob = max(probabilities) * 100
+            st.success(f"### **Chuyên ngành phù hợp nhất:** {prediction}\n**Độ tin cậy của AI:** {max_prob:.1f}%")
+            
+            # Phân bố xác suất
+            with st.expander("📊 Phân bố xác suất cho tất cả các ngành", expanded=False):
+                for cls, prob in zip(classes, probabilities):
+                    col1, col2 = st.columns([1, 4])
+                    col1.write(f"**{cls}**")
+                    col2.progress(float(prob), text=f"{prob*100:.1f}%")
+            
+            st.markdown("### 🧠 Quá trình lập luận của AI (XAI)")
+            st.caption("Cách trí tuệ nhân tạo suy luận để đưa ra quyết định dựa trên bộ não Decision Tree:")
+            
+            if explanation_steps:
+                for i, step in enumerate(explanation_steps):
+                    emoji = "✅" if step['operator'] == ">" else "🔻"
+                    color = "green" if step['operator'] == ">" else "orange"
+                    st.info(f"{emoji} **Bước {i+1}:** Nhận thấy điểm môn **{step['subject']}** là `{step['score']:.1f}` (Thỏa mãn điều kiện rẽ nhánh `{step['operator']} {step['threshold']:.2f}`)")
+            else:
+                st.warning("Không thể phân tích đường ra quyết định.")
             
             # Biểu đồ điểm số
             bar_fig = create_bar_chart(scores_dict)
             st.plotly_chart(bar_fig, use_container_width=True)
             
             # Xuất Excel
-            excel_bytes = generate_excel_report(scores_dict, prediction, explanation)
+            excel_bytes = generate_excel_report(scores_dict, prediction, explanation_steps)
             st.download_button(
                 label="📥 Tải xuống Báo cáo Excel",
                 data=excel_bytes,
