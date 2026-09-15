@@ -1,10 +1,16 @@
 """
-data_pipeline.py — Data Preprocessing & Labeling (v2)
-======================================================
+data_pipeline.py — Data Preprocessing & Labeling (v3 — Content-Based Filtering)
+=================================================================================
 Module xử lý dữ liệu điểm sinh viên FIT-HAU từ file CSV đã trích xuất từ PDF.
-Gán nhãn 5 hướng nghề nghiệp dựa trên Ma trận Kỹ năng (Skill Matrix).
 
-Pipeline: FIT_HAU_Raw_Scores.csv → Clean → Label → FIT_HAU_Cleaned.csv
+KIẾN TRÚC HYBRID 2 TẦNG:
+    Tầng 1 (file này): Content-Based Filtering
+        → Gán nhãn 5 hướng nghề nghiệp bằng Cosine Similarity
+          giữa vector điểm sinh viên và Career Profile Vectors.
+    Tầng 2 (train_core.py): Decision Tree
+        → Học từ nhãn đã gán, dự đoán và giải thích cho user mới (XAI).
+
+Pipeline: FIT_HAU_Raw_Scores.csv → Clean → Label (Cosine Sim) → FIT_HAU_Cleaned.csv
 """
 
 import os
@@ -27,42 +33,70 @@ TARGET_COLUMN: str = "Chuyen_Nganh"
 NON_FEATURE_COLUMNS: list[str] = ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]
 
 # ============================================================
-# SKILL MATRIX — Ánh xạ nhóm môn học → Hướng nghề nghiệp
+# FEATURE ORDER — Thứ tự chuẩn 20 môn (alphabet tiếng Việt)
 # ============================================================
-# Đây là phần có thể thay thế bằng K-Means clustering sau này.
-# Hiện tại dùng Heuristic Rules (Expert-defined Skill Matrix).
-SKILL_MATRIX: dict[str, list[str]] = {
-    "Software Engineer": [
-        "CÔNG NGHỆ PHẦN MỀM",
-        "KỸ THUẬT LẬP TRÌNH",
-        "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
-        "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-        "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    ],
-    "Data Engineer": [
-        "CƠ SỞ DỮ LIỆU",
-        "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    ],
-    "AI Engineer": [
-        "TOÁN RỜI RẠC",
-        "XỬ LÝ TÍN HIỆU SỐ",
-        "XỬ LÝ ẢNH",
-        "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    ],
-    "Security Engineer": [
-        "AN NINH MẠNG",
-        "AN TOÀN VÀ BẢO MẬT HTTT",
-        "MẠNG MÁY TÍNH",
-        "QUẢN TRỊ MẠNG MÁY TÍNH",
-    ],
-    "System/DevOps": [
-        "HỆ ĐIỀU HÀNH",
-        "HỆ ĐIỀU HÀNH LINUX",
-        "KIẾN TRÚC MÁY TÍNH",
-    ],
-}
+# Thứ tự này PHẢI khớp chính xác với thứ tự các giá trị trong
+# CAREER_PROFILES bên dưới. Khi thêm/bớt môn, cập nhật CẢ HAI.
+FEATURE_ORDER: list[str] = [
+    "AN NINH MẠNG",                      # 0
+    "AN TOÀN VÀ BẢO MẬT HTTT",           # 1
+    "CÔNG NGHỆ PHẦN MỀM",                # 2
+    "CƠ SỞ DỮ LIỆU",                    # 3
+    "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",   # 4
+    "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH", # 5
+    "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",       # 6
+    "HỆ ĐIỀU HÀNH",                      # 7
+    "HỆ ĐIỀU HÀNH LINUX",                # 8
+    "KIẾN TRÚC MÁY TÍNH",                # 9
+    "KỸ THUẬT LẬP TRÌNH",                # 10
+    "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",         # 11
+    "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",        # 12
+    "MẠNG MÁY TÍNH",                     # 13
+    "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",    # 14
+    "PHÂN TÍCH VÀ THIẾT KẾ HTTT",        # 15
+    "QUẢN TRỊ MẠNG MÁY TÍNH",           # 16
+    "TOÁN RỜI RẠC",                      # 17
+    "XỬ LÝ TÍN HIỆU SỐ",               # 18
+    "XỬ LÝ ẢNH",                         # 19
+]
 
-DEFAULT_LABEL: str = "Software Engineer"
+# ============================================================
+# CAREER PROFILE VECTORS — Content-Based Filtering
+# ============================================================
+# Mỗi Career Profile là 1 vector 20 chiều, giá trị [0.0, 1.0]:
+#   0.0 = môn không liên quan đến ngành này
+#   1.0 = môn cốt lõi (core competency) của ngành này
+#
+# Cosine Similarity so sánh HƯỚNG (pattern) điểm, không phụ thuộc
+# tổng điểm tuyệt đối → sinh viên giỏi đều vẫn được phân biệt
+# nếu pattern điểm nghiêng về 1 nhóm.
+#
+# Thứ tự giá trị trong mỗi vector PHẢI khớp với FEATURE_ORDER.
+# ============================================================
+CAREER_PROFILES: dict[str, np.ndarray] = {
+    "Software Engineer": np.array([
+        # ANM  ATBM  CNPM  CSDL  CTDL  GIS   HQTCSDL  HDH  HDHL  KTMT
+        0.1,  0.1,  1.0,  0.5,  0.9,  0.2,  0.4,     0.3, 0.2,  0.3,
+        # KTLT  KTDHMT  LTHDTG  MMT   NMCNTT  PTTKHTTT  QTMMT  TRR   XLTHS  XLA
+        0.9,  0.3,    0.9,    0.2,  0.3,    0.8,      0.1,   0.5,  0.2,   0.2,
+    ]),
+    "Data Engineer": np.array([
+        0.1,  0.2,  0.4,  1.0,  0.5,  0.5,  0.9,     0.2, 0.3,  0.2,
+        0.4,  0.2,    0.4,    0.2,  0.3,    0.6,      0.2,   0.4,  0.3,   0.2,
+    ]),
+    "AI Engineer": np.array([
+        0.0,  0.0,  0.3,  0.3,  0.8,  0.4,  0.2,     0.1, 0.1,  0.2,
+        0.5,  0.7,    0.5,    0.1,  0.3,    0.3,      0.1,   0.9,  0.8,   0.9,
+    ]),
+    "Security Engineer": np.array([
+        1.0,  0.9,  0.2,  0.2,  0.2,  0.1,  0.2,     0.5, 0.5,  0.4,
+        0.3,  0.1,    0.2,    0.9,  0.3,    0.2,      0.8,   0.2,  0.1,   0.1,
+    ]),
+    "System/DevOps": np.array([
+        0.3,  0.3,  0.3,  0.2,  0.2,  0.2,  0.3,     0.9, 1.0,  0.8,
+        0.3,  0.1,    0.2,    0.7,  0.3,    0.2,      0.6,   0.1,  0.1,   0.1,
+    ]),
+}
 
 
 # ============================================================
@@ -92,42 +126,80 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     return df_clean
 
 
+def cosine_similarity_score(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+    """Tính Cosine Similarity giữa 2 vectors.
+
+    Cosine Similarity = (A · B) / (||A|| × ||B||)
+
+    Returns:
+        float trong khoảng [-1.0, 1.0], thường [0.0, 1.0] vì điểm >= 0.
+        Trả về 0.0 nếu một trong hai vector có norm = 0 (toàn số 0).
+    """
+    norm_a = np.linalg.norm(vec_a)
+    norm_b = np.linalg.norm(vec_b)
+
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+
+    return float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+
+
 def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
-    """Assign career path labels based on Skill Matrix.
+    """Gán nhãn chuyên ngành bằng Content-Based Filtering (Cosine Similarity).
 
     Logic:
-        1. For each student, compute the mean score for each career group.
-        2. The group with the highest mean score (and > 0) gets assigned.
-        3. If all groups have mean 0 → assign DEFAULT_LABEL.
+        1. Lấy vector điểm 20 môn của sinh viên (theo FEATURE_ORDER).
+        2. Tính Cosine Similarity với từng Career Profile Vector.
+        3. Gán nhãn = ngành có similarity cao nhất.
+        4. Nếu tất cả similarity = 0 (toàn điểm 0) → gán "Software Engineer".
 
-    NOTE: This function is MODULAR — you can replace the logic below
-    with K-Means clustering in the future without changing any other file.
+    So với SKILL_MATRIX cũ:
+        - SKILL_MATRIX: chỉ xét nhóm con môn học, so trung bình → thiên lệch
+        - Cosine Sim: xét TOÀN BỘ 20 môn đồng thời, đo pattern → công bằng hơn
     """
     df_labeled = df.copy()
     labels = []
+    similarities_log = []  # Để in thống kê
 
-    # Pre-filter: only use columns that actually exist in the DataFrame
-    valid_matrix: dict[str, list[str]] = {}
-    for career, subjects in SKILL_MATRIX.items():
-        valid_subjects = [s for s in subjects if s in df_labeled.columns]
-        if valid_subjects:
-            valid_matrix[career] = valid_subjects
+    # Xác định các feature thực tế có trong DataFrame
+    valid_features = [f for f in FEATURE_ORDER if f in df_labeled.columns]
+    missing_features = [f for f in FEATURE_ORDER if f not in df_labeled.columns]
+
+    if missing_features:
+        print(f"      ⚠️  Missing features (sẽ dùng giá trị 0): {missing_features}")
 
     for _, row in df_labeled.iterrows():
-        best_career = DEFAULT_LABEL
-        best_avg = 0.0
+        # Xây dựng student vector theo FEATURE_ORDER
+        student_vector = np.array([
+            float(row[f]) if f in df_labeled.columns else 0.0
+            for f in FEATURE_ORDER
+        ])
 
-        for career, subjects in valid_matrix.items():
-            scores = [row[s] for s in subjects if row[s] > 0]
-            if scores:
-                avg = sum(scores) / len(scores)
-                if avg > best_avg:
-                    best_avg = avg
-                    best_career = career
+        # Tính similarity với từng Career Profile
+        best_career = "Software Engineer"  # Fallback
+        best_sim = -1.0
+        sim_dict = {}
+
+        for career, profile_vector in CAREER_PROFILES.items():
+            sim = cosine_similarity_score(student_vector, profile_vector)
+            sim_dict[career] = sim
+            if sim > best_sim:
+                best_sim = sim
+                best_career = career
 
         labels.append(best_career)
+        similarities_log.append(sim_dict)
 
     df_labeled[TARGET_COLUMN] = labels
+
+    # In thống kê similarity trung bình theo ngành
+    if similarities_log:
+        sim_df = pd.DataFrame(similarities_log)
+        print("      📊 Cosine Similarity trung bình theo Career Profile:")
+        for career in CAREER_PROFILES.keys():
+            mean_sim = sim_df[career].mean()
+            print(f"         {career}: {mean_sim:.4f}")
+
     return df_labeled
 
 
@@ -141,7 +213,7 @@ def prepare_for_training(df: pd.DataFrame) -> pd.DataFrame:
 def run_pipeline() -> pd.DataFrame:
     """Execute the full data pipeline end-to-end."""
     print("=" * 60)
-    print("🚀 DSS FIT-HAU — Data Pipeline v2")
+    print("🚀 DSS FIT-HAU — Data Pipeline v3 (Content-Based Filtering)")
     print("=" * 60)
 
     # Step 1: Load
@@ -156,10 +228,10 @@ def run_pipeline() -> pd.DataFrame:
     non_zero_count = (df[score_cols] > 0).any(axis=1).sum()
     print(f"      ✅ Students with at least 1 score > 0: {non_zero_count}/{len(df)}")
 
-    # Step 3: Label
-    print("\n[3/4] Assigning career labels (Skill Matrix)...")
+    # Step 3: Label (Content-Based Filtering)
+    print("\n[3/4] Assigning career labels (Cosine Similarity)...")
     df = assign_labels(df)
-    print(f"      ✅ Label distribution:")
+    print(f"\n      ✅ Label distribution:")
     print(df[TARGET_COLUMN].value_counts().to_string(header=False))
 
     # Step 4: Prepare for training (remove metadata)
