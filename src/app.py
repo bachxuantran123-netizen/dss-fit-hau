@@ -54,13 +54,18 @@ def load_model():
 # ============================================================
 # VALIDATION
 # ============================================================
-def validate_scores(scores: dict[str, float]) -> bool:
-    """Zero-Trust validation: block invalid scores immediately."""
+def validate_scores(scores: dict[str, float]) -> tuple[bool, str]:
+    """Zero-Trust validation: kiểm tra điểm hợp lệ.
+
+    Returns:
+        tuple: (is_valid: bool, error_message: str)
+            is_valid = True nếu tất cả điểm hợp lệ.
+            error_message = chuỗi rỗng nếu hợp lệ, mô tả lỗi nếu không hợp lệ.
+    """
     for subject, score in scores.items():
         if score < MIN_SCORE or score > MAX_SCORE:
-            st.error(f"🚨 Điểm số không hợp lệ ở môn {subject}: {score}. Vui lòng nhập điểm từ {MIN_SCORE} đến {MAX_SCORE}.")
-            st.stop()
-    return True
+            return False, f"🚨 Điểm số không hợp lệ ở môn **{subject}**: `{score}`. Vui lòng nhập điểm từ {MIN_SCORE} đến {MAX_SCORE}."
+    return True, ""
 
 
 # ============================================================
@@ -174,6 +179,14 @@ def main() -> None:
 
     # Nạp mô hình AI
     model = load_model()
+
+    # Guard: đảm bảo model đã được train với DataFrame (có feature_names_in_)
+    if not hasattr(model, 'feature_names_in_'):
+        st.error(
+            "⚠️ Mô hình không chứa thông tin tên feature (`feature_names_in_`). "
+            "Vui lòng train lại bằng `train_core.py` để tạo model mới."
+        )
+        st.stop()
     features = model.feature_names_in_
 
     # --- Sidebar ---
@@ -211,7 +224,10 @@ def main() -> None:
             
         if st.button("🔍 Phân tích & Gợi ý", type="primary"):
             # Zero-trust validation
-            validate_scores(scores_dict)
+            is_valid, err_msg = validate_scores(scores_dict)
+            if not is_valid:
+                st.error(err_msg)
+                st.stop()
             
             input_df = pd.DataFrame([scores_dict])
             

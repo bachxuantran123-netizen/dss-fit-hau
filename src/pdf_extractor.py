@@ -45,7 +45,6 @@ SUBJECT_MAPPING: dict[str, str] = {
     "phân tích và thiết kế": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
     "toán rời rạc": "TOÁN RỜI RẠC",
     "xử lý tín hiệu": "XỬ LÝ TÍN HIỆU SỐ",
-    "xử lý ảnh": "XỬ LÝ ẢNH",
     "cấu trúc dữ liệu": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
     "kiến trúc máy tính": "KIẾN TRÚC MÁY TÍNH",
 }
@@ -195,6 +194,13 @@ def run_extraction() -> pd.DataFrame:
         raise FileNotFoundError(f"Không tìm thấy thư mục: {RAW_BASE_DIR}")
 
     df = scan_all_pdfs()
+
+    # Guard: đảm bảo đã trích xuất được dữ liệu
+    if df.empty:
+        raise ValueError(
+            "Không trích xuất được dữ liệu nào từ PDF. "
+            "Kiểm tra lại thư mục PDF và SUBJECT_MAPPING có khớp không."
+        )
 
     # Save to CSV
     os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
