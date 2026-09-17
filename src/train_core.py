@@ -1,8 +1,15 @@
 """
-train_core.py — Sprint 1: AI Core Training Pipeline
-===================================================
-Module huấn luyện mô hình Decision Tree tự động cho hệ thống DSS FIT-HAU,
-hỗ trợ linh hoạt cấu trúc dữ liệu mở rộng với 23 features.
+train_core.py — AI Core Training Pipeline (Tầng 2: Decision Tree)
+==================================================================
+Module huấn luyện mô hình Decision Tree tự động cho hệ thống DSS FIT-HAU.
+
+Kiến trúc Hybrid 2 tầng:
+    Tầng 1 (data_pipeline.py): Content-Based Filtering (Cosine Similarity)
+        → Gán nhãn cho dữ liệu training.
+    Tầng 2 (file này): Decision Tree (GridSearchCV)
+        → Học từ nhãn đã gán, dự đoán cho user mới, cung cấp XAI.
+
+Hỗ trợ linh hoạt cấu trúc dữ liệu mở rộng với 20 features (môn học).
 """
 
 import os

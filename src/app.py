@@ -1,5 +1,5 @@
 """
-app.py — Sprint 3: Streamlit Dashboard (Main Entry Point)
+app.py — Streamlit Dashboard (Main Entry Point)
 ============================================================
 Giao diện Web cho Hệ Trợ Giúp Quyết Định Học Tập FIT-HAU.
 
@@ -9,11 +9,11 @@ Features:
     - Sidebar: Thông tin & cấu hình
     - Export: Download phiếu kết quả Excel
 
-Architecture:
+Architecture (Hybrid 2 tầng):
+    - Tầng 1: Content-Based Filtering (Cosine Similarity) → Gán nhãn
+    - Tầng 2: Decision Tree → Dự đoán + XAI
     - KHÔNG có logic training — chỉ load model .pkl và gọi predict()
     - Form nhập liệu ĐỘNG theo feature_names_in_ của mô hình
-    - Horizontal Bar Chart trực quan hóa điểm
-    - Explainable AI qua decision_path
 """
 
 import os
@@ -182,7 +182,7 @@ def main() -> None:
         st.markdown("**Hệ Trợ Giúp Quyết Định Học Tập**")
         st.markdown("Khoa CNTT — ĐH Kiến trúc Hà Nội")
         st.divider()
-        st.caption("Powered by Decision Tree + Explainable AI")
+        st.caption("Powered by Content-Based Filtering + Decision Tree + XAI")
 
     # --- Main Content ---
     st.title("🎓 Hệ Trợ Giúp Quyết Định Học Tập")
