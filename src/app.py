@@ -309,15 +309,16 @@ def main() -> None:
                     studied_key = f"studied_{feature}"
                     is_studied = st.checkbox("Đã có điểm", value=st.session_state.get(studied_key, True), key=f"check_{feature}")
                     
+                    score_val = st.session_state.get(f"score_{feature}", 0.0)
+                    input_val = st.number_input(
+                        f"Điểm {feature}", min_value=MIN_SCORE, max_value=MAX_SCORE, 
+                        value=score_val, step=0.1, key=f"input_score_{feature}",
+                        label_visibility="collapsed", disabled=not is_studied
+                    )
+                    
                     if is_studied:
-                        score_val = st.session_state.get(f"score_{feature}", 0.0)
-                        scores_dict[feature] = st.number_input(
-                            f"Điểm {feature}", min_value=MIN_SCORE, max_value=MAX_SCORE, 
-                            value=score_val, step=0.1, key=f"input_score_{feature}",
-                            label_visibility="collapsed"
-                        )
+                        scores_dict[feature] = input_val
                     else:
-                        st.caption("*(Bỏ qua / Chưa học)*")
                         scores_dict[feature] = -1.0
                         
                     st.markdown("---")
