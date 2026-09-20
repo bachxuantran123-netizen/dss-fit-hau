@@ -64,8 +64,15 @@ def load_model():
 
 
 def validate_scores(scores: dict[str, float]) -> tuple[bool, str]:
-    """Zero-Trust validation: kiểm tra điểm hợp lệ."""
+    """Zero-Trust validation: kiểm tra điểm hợp lệ.
+    
+    Giá trị hợp lệ:
+        -1.0 = Chưa học (bỏ qua)
+        0.0 - 10.0 = Điểm thực tế
+    """
     for subject, score in scores.items():
+        if score == -1.0:
+            continue  # -1.0 = chưa học, hợp lệ
         if score < MIN_SCORE or score > MAX_SCORE:
             return False, f"🚨 Điểm số không hợp lệ ở môn **{subject}**: `{score}`. Vui lòng nhập điểm từ {MIN_SCORE} đến {MAX_SCORE}."
     return True, ""
