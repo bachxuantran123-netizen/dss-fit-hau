@@ -114,14 +114,14 @@ def load_raw_data(filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
 
 
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean data: ensure numeric scores, fill NaN with 0.0."""
+    """Clean data: ensure numeric scores, fill NaN with -1.0."""
     df_clean = df.copy()
 
     # Identify score columns (all except metadata)
     score_cols = [c for c in df_clean.columns if c not in NON_FEATURE_COLUMNS]
 
     for col in score_cols:
-        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0.0).round(1)
+        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(-1.0).round(1)
 
     return df_clean
 
@@ -169,9 +169,9 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
         print(f"      ⚠️  Missing features (sẽ dùng giá trị 0): {missing_features}")
 
     for _, row in df_labeled.iterrows():
-        # Xây dựng student vector theo FEATURE_ORDER
+        # Xây dựng student vector theo FEATURE_ORDER, loại bỏ điểm -1.0 để tính Cosine Similarity (tránh góc âm)
         student_vector = np.array([
-            float(row[f]) if f in df_labeled.columns else 0.0
+            max(0.0, float(row[f])) if f in df_labeled.columns else 0.0
             for f in FEATURE_ORDER
         ])
 

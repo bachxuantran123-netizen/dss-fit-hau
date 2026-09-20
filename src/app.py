@@ -311,7 +311,7 @@ def main() -> None:
                         )
                     else:
                         st.caption("*(Bỏ qua / Chưa học)*")
-                        scores_dict[feature] = 0.0
+                        scores_dict[feature] = -1.0
                         
                     st.markdown("---")
             
@@ -325,7 +325,7 @@ def main() -> None:
                         if is_stud:
                             st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
                         else:
-                            st.session_state[f"score_{feature}"] = 0.0
+                            st.session_state[f"score_{feature}"] = -1.0
                     st.session_state.step = 1
                     st.rerun()
             with col_next:
@@ -336,7 +336,7 @@ def main() -> None:
                         if is_stud:
                             st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
                         else:
-                            st.session_state[f"score_{feature}"] = 0.0
+                            st.session_state[f"score_{feature}"] = -1.0
                     
                     is_valid, err_msg = validate_scores(scores_dict)
                     if not is_valid:
@@ -402,7 +402,10 @@ def main() -> None:
                     list_md = ""
                     for i, step in enumerate(explanation_steps):
                         emoji = "✅" if step['operator'] == ">" else "🔻"
-                        list_md += f"- {emoji} Node {i+1}: Điểm môn **{step['subject']}** là `{step['score']:.1f}` (Thỏa mãn `{step['operator']} {step['threshold']:.2f}`)\n"
+                        if step['score'] == -1.0:
+                            list_md += f"- {emoji} Node {i+1}: Môn **{step['subject']}** ở trạng thái `Chưa học` (Thỏa mãn `{step['operator']} {step['threshold']:.2f}`)\n"
+                        else:
+                            list_md += f"- {emoji} Node {i+1}: Điểm môn **{step['subject']}** là `{step['score']:.1f}` (Thỏa mãn `{step['operator']} {step['threshold']:.2f}`)\n"
                     st.markdown(list_md)
                 else:
                     st.warning("Không thể phân tích đường ra quyết định.")
