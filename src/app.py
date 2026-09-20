@@ -290,32 +290,53 @@ def main() -> None:
         elif st.session_state.step == 2:
             st.subheader("📚 Năng lực học tập")
             greeting_name = st.session_state.user_name if st.session_state.user_name else "bạn"
-            st.info(f"Chào **{greeting_name}**, vui lòng nhập điểm tổng kết các môn học (0.0 - 10.0) để AI phân tích.")
+            st.info(f"Chào **{greeting_name}**, vui lòng nhập điểm cho các môn đã học. Tích bỏ chọn nếu chưa học môn đó.")
 
             scores_dict = {}
             cols = st.columns(3)
             for i, feature in enumerate(features):
                 with cols[i % 3]:
-                    score_val = st.session_state.get(f"score_{feature}", 0.0)
-                    scores_dict[feature] = st.number_input(
-                        feature, min_value=MIN_SCORE, max_value=MAX_SCORE, 
-                        value=score_val, step=0.1, key=f"input_score_{feature}"
-                    )
+                    st.markdown(f"**{feature}**")
+                    
+                    # Checkbox to toggle studied state
+                    studied_key = f"studied_{feature}"
+                    is_studied = st.checkbox("Đã có điểm", value=st.session_state.get(studied_key, True), key=f"check_{feature}")
+                    
+                    if is_studied:
+                        score_val = st.session_state.get(f"score_{feature}", 0.0)
+                        scores_dict[feature] = st.number_input(
+                            f"Điểm {feature}", min_value=MIN_SCORE, max_value=MAX_SCORE, 
+                            value=score_val, step=0.1, key=f"input_score_{feature}",
+                            label_visibility="collapsed"
+                        )
+                    else:
+                        st.caption("*(Bỏ qua / Chưa học)*")
+                        scores_dict[feature] = 0.0
+                        
+                    st.markdown("---")
             
             st.divider()
             col_back, col_next = st.columns([1, 4])
             with col_back:
                 if st.button("⬅️ Quay lại", use_container_width=True):
-                    # Save currently entered scores before going back
                     for feature in features:
-                        st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
+                        is_stud = st.session_state[f"check_{feature}"]
+                        st.session_state[f"studied_{feature}"] = is_stud
+                        if is_stud:
+                            st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
+                        else:
+                            st.session_state[f"score_{feature}"] = 0.0
                     st.session_state.step = 1
                     st.rerun()
             with col_next:
                 if st.button("🔮 Hoàn tất & Xem Khuyến nghị", type="primary", use_container_width=True):
-                    # Save scores
                     for feature in features:
-                        st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
+                        is_stud = st.session_state[f"check_{feature}"]
+                        st.session_state[f"studied_{feature}"] = is_stud
+                        if is_stud:
+                            st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
+                        else:
+                            st.session_state[f"score_{feature}"] = 0.0
                     
                     is_valid, err_msg = validate_scores(scores_dict)
                     if not is_valid:
