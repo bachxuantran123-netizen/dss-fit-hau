@@ -40,24 +40,28 @@ NON_FEATURE_COLUMNS: list[str] = ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]
 FEATURE_ORDER: list[str] = [
     "AN NINH MẠNG",                      # 0
     "AN TOÀN VÀ BẢO MẬT HTTT",           # 1
-    "CÔNG NGHỆ PHẦN MỀM",                # 2
-    "CƠ SỞ DỮ LIỆU",                    # 3
-    "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",   # 4
-    "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH", # 5
-    "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",       # 6
-    "HỆ ĐIỀU HÀNH",                      # 7
-    "HỆ ĐIỀU HÀNH LINUX",                # 8
-    "KIẾN TRÚC MÁY TÍNH",                # 9
-    "KỸ THUẬT LẬP TRÌNH",                # 10
-    "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",         # 11
-    "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",        # 12
-    "MẠNG MÁY TÍNH",                     # 13
-    "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",    # 14
-    "PHÂN TÍCH VÀ THIẾT KẾ HTTT",        # 15
-    "QUẢN TRỊ MẠNG MÁY TÍNH",           # 16
-    "TOÁN RỜI RẠC",                      # 17
-    "XỬ LÝ TÍN HIỆU SỐ",               # 18
-    "XỬ LÝ ẢNH",                         # 19
+    "C#",                                 # 2  [NEW]
+    "CÔNG NGHỆ PHẦN MỀM",                # 3
+    "CƠ SỞ DỮ LIỆU",                    # 4
+    "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",   # 5
+    "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH", # 6
+    "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",       # 7
+    "HỆ ĐIỀU HÀNH",                      # 8
+    "HỆ ĐIỀU HÀNH LINUX",                # 9
+    "JAVA",                               # 10 [NEW]
+    "KIẾN TRÚC MÁY TÍNH",                # 11
+    "KỸ THUẬT LẬP TRÌNH",                # 12
+    "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",         # 13
+    "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",        # 14
+    "LẬP TRÌNH WEB",                      # 15 [NEW]
+    "MẠNG MÁY TÍNH",                     # 16
+    "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",    # 17
+    "PHÂN TÍCH VÀ THIẾT KẾ HTTT",        # 18
+    "QUẢN TRỊ MẠNG MÁY TÍNH",           # 19
+    "TOÁN RỜI RẠC",                      # 20
+    "TRÍ TUỆ NHÂN TẠO",                  # 21 [NEW]
+    "XỬ LÝ TÍN HIỆU SỐ",               # 22
+    "XỬ LÝ ẢNH",                         # 23
 ]
 
 # ============================================================
@@ -74,27 +78,41 @@ FEATURE_ORDER: list[str] = [
 # Thứ tự giá trị trong mỗi vector PHẢI khớp với FEATURE_ORDER.
 # ============================================================
 CAREER_PROFILES: dict[str, np.ndarray] = {
+    # Thứ tự 24 features (alphabet):
+    # ANM, ATBM, C#, CNPM, CSDL, CTDL, GIS, HQTCSDL, HDH, HDHL,
+    # JAVA, KTMT, KTLT, KTDHMT, LTHDTG, LTWEB, MMT, NMCNTT, PTTKHTTT, QTMMT,
+    # TRR, TTNT, XLTHS, XLA
     "Software Engineer": np.array([
-        # ANM  ATBM  CNPM  CSDL  CTDL  GIS   HQTCSDL  HDH  HDHL  KTMT
-        0.1,  0.1,  1.0,  0.5,  0.9,  0.2,  0.4,     0.3, 0.2,  0.3,
-        # KTLT  KTDHMT  LTHDTG  MMT   NMCNTT  PTTKHTTT  QTMMT  TRR   XLTHS  XLA
-        0.9,  0.3,    0.9,    0.2,  0.3,    0.8,      0.1,   0.5,  0.2,   0.2,
+        # ANM  ATBM  C#    CNPM  CSDL  CTDL  GIS   HQTCSDL  HDH  HDHL
+        0.1,  0.1,  0.8,  1.0,  0.5,  0.9,  0.2,  0.4,     0.3, 0.2,
+        # JAVA KTMT  KTLT  KTDHMT  LTHDTG  LTWEB  MMT  NMCNTT  PTTKHTTT  QTMMT
+        0.9,  0.3,  0.9,  0.3,    0.9,    0.7,   0.2, 0.3,    0.8,      0.1,
+        # TRR  TTNT  XLTHS  XLA
+        0.5,  0.3,  0.2,   0.2,
     ]),
     "Data Engineer": np.array([
-        0.1,  0.2,  0.4,  1.0,  0.5,  0.5,  0.9,     0.2, 0.3,  0.2,
-        0.4,  0.2,    0.4,    0.2,  0.3,    0.6,      0.2,   0.4,  0.3,   0.2,
+        0.1,  0.2,  0.5,  0.4,  1.0,  0.5,  0.5,  0.9,     0.2, 0.3,
+        0.4,  0.2,  0.4,  0.2,    0.4,    0.3,   0.2, 0.3,    0.6,      0.2,
+        0.4,  0.5,  0.3,   0.2,
     ]),
     "AI Engineer": np.array([
-        0.0,  0.0,  0.3,  0.3,  0.8,  0.4,  0.2,     0.1, 0.1,  0.2,
-        0.5,  0.7,    0.5,    0.1,  0.3,    0.3,      0.1,   0.9,  0.8,   0.9,
+        0.0,  0.0,  0.3,  0.3,  0.3,  0.8,  0.4,  0.2,     0.1, 0.1,
+        0.4,  0.2,  0.5,  0.7,    0.5,    0.2,   0.1, 0.3,    0.3,      0.1,
+<<<<<<< HEAD
+        0.9,  1.0,  0.8,   0.9,
+=======
+        0.9,  1.0,  0.3,   0.9,
+>>>>>>> fc264467222021095a802c504e6090b811d0e1a8
     ]),
     "Security Engineer": np.array([
-        1.0,  0.9,  0.2,  0.2,  0.2,  0.1,  0.2,     0.5, 0.5,  0.4,
-        0.3,  0.1,    0.2,    0.9,  0.3,    0.2,      0.8,   0.2,  0.1,   0.1,
+        1.0,  0.9,  0.2,  0.2,  0.2,  0.2,  0.1,  0.2,     0.5, 0.5,
+        0.2,  0.4,  0.3,  0.1,    0.2,    0.2,   0.9, 0.3,    0.2,      0.8,
+        0.2,  0.1,  0.1,   0.1,
     ]),
     "System/DevOps": np.array([
-        0.3,  0.3,  0.3,  0.2,  0.2,  0.2,  0.3,     0.9, 1.0,  0.8,
-        0.3,  0.1,    0.2,    0.7,  0.3,    0.2,      0.6,   0.1,  0.1,   0.1,
+        0.3,  0.3,  0.3,  0.3,  0.2,  0.2,  0.2,  0.3,     0.9, 1.0,
+        0.3,  0.8,  0.3,  0.1,    0.2,    0.3,   0.7, 0.3,    0.2,      0.6,
+        0.1,  0.1,  0.1,   0.1,
     ]),
 }
 
@@ -114,14 +132,14 @@ def load_raw_data(filepath: str = RAW_DATA_PATH) -> pd.DataFrame:
 
 
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean data: ensure numeric scores, fill NaN with 0.0."""
+    """Clean data: ensure numeric scores, fill NaN with -1.0 (chưa học)."""
     df_clean = df.copy()
 
     # Identify score columns (all except metadata)
     score_cols = [c for c in df_clean.columns if c not in NON_FEATURE_COLUMNS]
 
     for col in score_cols:
-        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0.0).round(1)
+        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(-1.0).round(1)
 
     return df_clean
 
@@ -169,9 +187,9 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
         print(f"      ⚠️  Missing features (sẽ dùng giá trị 0): {missing_features}")
 
     for _, row in df_labeled.iterrows():
-        # Xây dựng student vector theo FEATURE_ORDER
+        # Xây dựng student vector theo FEATURE_ORDER, loại bỏ điểm -1.0 để tính Cosine Similarity (tránh góc âm)
         student_vector = np.array([
-            float(row[f]) if f in df_labeled.columns else 0.0
+            max(0.0, float(row[f])) if f in df_labeled.columns else 0.0
             for f in FEATURE_ORDER
         ])
 

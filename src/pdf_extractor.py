@@ -170,11 +170,11 @@ def scan_all_pdfs() -> pd.DataFrame:
     # Build DataFrame
     df = pd.DataFrame(list(all_records.values()))
 
-    # Fill missing subjects with 0.0
+    # Fill missing subjects with -1.0 (to distinguish from a real score of 0.0)
     for subj in sorted(subject_set):
         if subj not in df.columns:
-            df[subj] = 0.0
-    df = df.fillna(0.0)
+            df[subj] = -1.0
+    df = df.fillna(-1.0)
 
     # Reorder columns: metadata first, then subjects alphabetically
     meta_cols = ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]
