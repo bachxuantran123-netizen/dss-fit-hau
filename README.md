@@ -38,7 +38,7 @@ Offline Training Pipeline                                  Online Inference (Web
 
 | Tầng | Phương pháp | Vai trò |
 |------|-------------|---------|
-| **Tầng 1** | Content-Based Filtering (Cosine Similarity) | Gán nhãn cho dữ liệu training — thay thế Skill Matrix heuristic cũ. So sánh pattern điểm 20 môn với 5 Career Profile Vectors. |
+| **Tầng 1** | Content-Based Filtering (Cosine Similarity) | Gán nhãn cho dữ liệu training — thay thế Skill Matrix heuristic cũ. So sánh pattern điểm 24 môn với 5 Career Profile Vectors. |
 | **Tầng 2** | Decision Tree (GridSearchCV) | Học từ nhãn đã gán → dự đoán nhanh cho user mới + cung cấp giải thích (XAI) qua decision_path. |
 | **Tầng 3** | Heuristic Rules (Hybrid Score) | Tích hợp online: Kết hợp xác suất từ AI với Trọng số Sở thích người dùng để đưa ra Bảng Xếp Hạng cá nhân hóa chính xác nhất. |
 
@@ -52,6 +52,7 @@ DSS FIT-HAU/
 │   └── feedback.csv        → Dữ liệu đánh giá UAT của người dùng
 ├── src/
 │   ├── pdf_extractor.py    → Trích xuất và gom bảng điểm từ hàng trăm file PDF
+│   ├── merge_new_data.py   → Hợp nhất dữ liệu điểm 4 môn mới vào file điểm gốc
 │   ├── data_pipeline.py    → Xử lý dữ liệu & Gán nhãn bằng Content-Based Filtering (Cosine Similarity)
 │   ├── train_core.py       → Huấn luyện Decision Tree (GridSearchCV)
 │   └── app.py              → Giao diện Web Streamlit (Wizard Flow, XAI, Hybrid Score)
@@ -87,6 +88,9 @@ pip install -r requirements.txt
 ```bash
 # Bước 1: Trích xuất dữ liệu từ PDF (Tuỳ chọn nếu đã có file CSV thô)
 python src/pdf_extractor.py
+
+# Bước 1.5: Hợp nhất dữ liệu môn học mới (Tuỳ chọn nếu có file dữ liệu bổ sung)
+python src/merge_new_data.py
 
 # Bước 2: Làm sạch dữ liệu và Gán nhãn bằng Cosine Similarity (Tiền xử lý)
 python src/data_pipeline.py
