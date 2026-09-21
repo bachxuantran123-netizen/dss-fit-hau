@@ -86,14 +86,14 @@ def merge_data() -> pd.DataFrame:
     new_subjects = [col for col in NEW_SUBJECT_MAPPING.values()]
     for subj in new_subjects:
         if subj not in df_existing.columns:
-            df_existing[subj] = 0.0
+            df_existing[subj] = -1.0
             print(f"      ➕ Added column: {subj}")
 
-    # Ensure all 24 subject columns exist in new data (fill missing with 0.0)
+    # Ensure all 24 subject columns exist in new data (fill missing with -1.0 = chưa học)
     all_subject_cols = [c for c in df_existing.columns if c not in ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]]
     for col in all_subject_cols:
         if col not in df_new.columns:
-            df_new[col] = 0.0
+            df_new[col] = -1.0
 
     # Step 4: Merge — update existing students or append new ones
     print("\n[4/4] Merging data...")
@@ -113,12 +113,15 @@ def merge_data() -> pd.DataFrame:
             updated_count += 1
         else:
             # Append new student row
+            meta_cols_set = {"Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"}
             new_row = {}
             for col in df_existing.columns:
                 if col in row.index:
                     new_row[col] = row[col]
+                elif col in meta_cols_set:
+                    new_row[col] = ""  # Metadata → chuỗi rỗng
                 else:
-                    new_row[col] = 0.0
+                    new_row[col] = -1.0  # Score → chưa học
             df_existing = pd.concat([df_existing, pd.DataFrame([new_row])], ignore_index=True)
             appended_count += 1
 

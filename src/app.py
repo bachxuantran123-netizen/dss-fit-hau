@@ -11,6 +11,7 @@ Architecture (Hybrid 2 tầng + Rule-based Preferences):
 
 import os
 import io
+import csv
 import datetime
 import streamlit as st
 import pandas as pd
@@ -27,6 +28,7 @@ FEEDBACK_PATH: str = os.path.join("data", "feedback.csv")
 
 MAX_SCORE: float = 10.0
 MIN_SCORE: float = 0.0
+PREFERENCE_BONUS: float = 0.10  # Bonus cộng thêm cho mỗi sở thích phù hợp
 
 # Ánh xạ sở thích sang chuyên ngành
 PREFERENCES_MAP = {
@@ -189,15 +191,15 @@ def save_feedback(name: str, suggested_career: str, rating: int, comment: str):
     os.makedirs(os.path.dirname(FEEDBACK_PATH), exist_ok=True)
     file_exists = os.path.exists(FEEDBACK_PATH)
     
-    # Xử lý tên để tránh gãy CSV nếu có dấu phẩy
-    safe_name = name.replace(',', '') if name else "Ẩn danh"
-    safe_comment = comment.replace(',', '') if comment else "Không có"
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    safe_name = name if name else "Ẩn danh"
+    safe_comment = comment if comment else "Không có"
     
-    with open(FEEDBACK_PATH, "a", encoding='utf-8-sig') as f:
+    with open(FEEDBACK_PATH, "a", encoding='utf-8-sig', newline='') as f:
+        writer = csv.writer(f)
         if not file_exists:
-            f.write("Timestamp,Name,Suggested_Career,Rating,Comment\n")
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        f.write(f"{timestamp},{safe_name},{suggested_career},{rating},{safe_comment}\n")
+            writer.writerow(["Timestamp", "Name", "Suggested_Career", "Rating", "Comment"])
+        writer.writerow([timestamp, safe_name, suggested_career, rating, safe_comment])
 
 
 # ============================================================
@@ -372,11 +374,10 @@ def main() -> None:
             
             # --- TÍNH ĐIỂM HYBRID SCORE ---
             hybrid_scores = dict(zip(classes, probabilities_raw))
-            BONUS_VALUE = 0.10 
             
             for pref_career in selected_prefs:
                 if pref_career in hybrid_scores:
-                    hybrid_scores[pref_career] += BONUS_VALUE
+                    hybrid_scores[pref_career] += PREFERENCE_BONUS
             
             total_score = sum(hybrid_scores.values())
             for k in hybrid_scores:
@@ -403,9 +404,11 @@ def main() -> None:
             st.markdown("#### 📝 Lời khuyên hành động")
             st.info(CAREER_ADVICE.get(top1_career, "Vui lòng tập trung học tốt các môn chuyên ngành."))
             
+            # Tính explanation trước expander để tránh NameError khi tải Excel
+            explanation_steps = explain_decision(model, input_df)
+            
             with st.expander("🧠 Xem chi tiết quá trình phân tích AI (XAI)"):
                 st.caption("AI đã lập luận thế nào dựa trên điểm số bạn nhập:")
-                explanation_steps = explain_decision(model, input_df)
                 if explanation_steps:
                     list_md = ""
                     for i, step in enumerate(explanation_steps):

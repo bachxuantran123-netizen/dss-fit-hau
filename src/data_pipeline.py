@@ -98,11 +98,7 @@ CAREER_PROFILES: dict[str, np.ndarray] = {
     "AI Engineer": np.array([
         0.0,  0.0,  0.3,  0.3,  0.3,  0.8,  0.4,  0.2,     0.1, 0.1,
         0.4,  0.2,  0.5,  0.7,    0.5,    0.2,   0.1, 0.3,    0.3,      0.1,
-<<<<<<< HEAD
-        0.9,  1.0,  0.8,   0.9,
-=======
         0.9,  1.0,  0.3,   0.9,
->>>>>>> fc264467222021095a802c504e6090b811d0e1a8
     ]),
     "Security Engineer": np.array([
         1.0,  0.9,  0.2,  0.2,  0.2,  0.2,  0.1,  0.2,     0.5, 0.5,
@@ -166,57 +162,58 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
     """Gán nhãn chuyên ngành bằng Content-Based Filtering (Cosine Similarity).
 
     Logic:
-        1. Lấy vector điểm 20 môn của sinh viên (theo FEATURE_ORDER).
-        2. Tính Cosine Similarity với từng Career Profile Vector.
+        1. Lấy vector điểm 24 môn của sinh viên (theo FEATURE_ORDER).
+        2. Tính Cosine Similarity với từng Career Profile Vector bằng NumPy Broadcasting.
         3. Gán nhãn = ngành có similarity cao nhất.
         4. Nếu tất cả similarity = 0 (toàn điểm 0) → gán "Software Engineer".
 
     So với SKILL_MATRIX cũ:
         - SKILL_MATRIX: chỉ xét nhóm con môn học, so trung bình → thiên lệch
-        - Cosine Sim: xét TOÀN BỘ 20 môn đồng thời, đo pattern → công bằng hơn
+        - Cosine Sim: xét TOÀN BỘ 24 môn đồng thời, đo pattern → công bằng hơn
     """
     df_labeled = df.copy()
-    labels = []
-    similarities_log = []  # Để in thống kê
 
     # Xác định các feature thực tế có trong DataFrame
-    valid_features = [f for f in FEATURE_ORDER if f in df_labeled.columns]
     missing_features = [f for f in FEATURE_ORDER if f not in df_labeled.columns]
-
     if missing_features:
         print(f"      ⚠️  Missing features (sẽ dùng giá trị 0): {missing_features}")
 
-    for _, row in df_labeled.iterrows():
-        # Xây dựng student vector theo FEATURE_ORDER, loại bỏ điểm -1.0 để tính Cosine Similarity (tránh góc âm)
-        student_vector = np.array([
-            max(0.0, float(row[f])) if f in df_labeled.columns else 0.0
-            for f in FEATURE_ORDER
-        ])
+    # 1. Trích xuất ma trận điểm theo FEATURE_ORDER, điền 0.0 cho các môn thiếu
+    # Loại bỏ điểm -1.0 (chưa học) thành 0.0 để tính Cosine Sim
+    score_matrix = df_labeled.reindex(columns=FEATURE_ORDER, fill_value=0.0).values
+    score_matrix = np.maximum(score_matrix, 0.0)
 
-        # Tính similarity với từng Career Profile
-        best_career = "Software Engineer"  # Fallback
-        best_sim = -1.0
-        sim_dict = {}
+    # 2. Xây dựng ma trận Profile
+    careers = list(CAREER_PROFILES.keys())
+    profile_matrix = np.array([CAREER_PROFILES[c] for c in careers])
 
-        for career, profile_vector in CAREER_PROFILES.items():
-            sim = cosine_similarity_score(student_vector, profile_vector)
-            sim_dict[career] = sim
-            if sim > best_sim:
-                best_sim = sim
-                best_career = career
+    # 3. Tính Cosine Similarity bằng NumPy broadcasting
+    dot_products = np.dot(score_matrix, profile_matrix.T)
+    student_norms = np.linalg.norm(score_matrix, axis=1)
+    profile_norms = np.linalg.norm(profile_matrix, axis=1)
 
-        labels.append(best_career)
-        similarities_log.append(sim_dict)
+    # Tránh chia cho 0
+    student_norms[student_norms == 0] = 1e-10
+
+    # similarity_matrix: (N, M)
+    similarity_matrix = dot_products / (student_norms[:, np.newaxis] * profile_norms)
+
+    # Lấy nhãn cao nhất
+    best_career_indices = np.argmax(similarity_matrix, axis=1)
+    labels = [careers[i] for i in best_career_indices]
+
+    # Fallback cho trường hợp toàn 0
+    zero_norm_mask = (student_norms == 1e-10)
+    for idx in np.where(zero_norm_mask)[0]:
+        labels[idx] = "Software Engineer"
 
     df_labeled[TARGET_COLUMN] = labels
 
     # In thống kê similarity trung bình theo ngành
-    if similarities_log:
-        sim_df = pd.DataFrame(similarities_log)
-        print("      📊 Cosine Similarity trung bình theo Career Profile:")
-        for career in CAREER_PROFILES.keys():
-            mean_sim = sim_df[career].mean()
-            print(f"         {career}: {mean_sim:.4f}")
+    sim_df = pd.DataFrame(similarity_matrix, columns=careers)
+    print("      📊 Cosine Similarity trung bình theo Career Profile:")
+    for career in careers:
+        print(f"         {career}: {sim_df[career].mean():.4f}")
 
     return df_labeled
 

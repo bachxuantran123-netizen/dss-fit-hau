@@ -47,6 +47,13 @@ SUBJECT_MAPPING: dict[str, str] = {
     "xử lý tín hiệu": "XỬ LÝ TÍN HIỆU SỐ",
     "cấu trúc dữ liệu": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
     "kiến trúc máy tính": "KIẾN TRÚC MÁY TÍNH",
+    # 4 môn mới (bổ sung từ merge_new_data.py)
+    "lập trình java": "JAVA",
+    "java": "JAVA",
+    "lập trình c#": "C#",
+    "c#": "C#",
+    "lập trình web": "LẬP TRÌNH WEB",
+    "trí tuệ nhân tạo": "TRÍ TUỆ NHÂN TẠO",
 }
 
 # Column indices in PDF table (based on observed structure)

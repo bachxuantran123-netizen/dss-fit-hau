@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 - **Hệ thống:** Ứng dụng Học máy định hướng nghề nghiệp cho sinh viên CNTT FIT-HAU.
-- **Mục tiêu:** Cung cấp Hệ trợ giúp quyết định cá nhân (Personal DSS) phân tích điểm số của 20 môn chuyên ngành CNTT để gợi ý 5 hướng nghề nghiệp (Software Engineer, Data Engineer, AI Engineer, Security Engineer, System/DevOps).
+- **Mục tiêu:** Cung cấp Hệ trợ giúp quyết định cá nhân (Personal DSS) phân tích điểm số của 24 môn chuyên ngành CNTT để gợi ý 5 hướng nghề nghiệp (Software Engineer, Data Engineer, AI Engineer, Security Engineer, System/DevOps).
 - **Kiến trúc khép kín:** Phân tách hoàn toàn 2 môi trường:
   1. Offline Training (Huấn luyện ngoại tuyến, xuất model).
   2. Online Inference (Giao diện Web, nạp model để suy diễn).
@@ -21,7 +21,7 @@
   │   ├── pdf_extractor.py               → Trích xuất và gom bảng điểm từ hàng trăm file PDF
   │   ├── data_pipeline.py               → Tiền xử lý dữ liệu & Gán nhãn theo Skill Matrix
   │   ├── train_core.py                  → Huấn luyện DecisionTree & Hyperparameter tuning
-  │   └── app.py                         → Streamlit UI (Dynamic 20 subjects Form)
+  │   └── app.py                         → Streamlit UI (Dynamic 24 subjects Form)
   ├── models/                            → Tri thức AI
   │   └── dss_brain.pkl                  → Model đã huấn luyện (Joblib)
   ├── reports/                           → Biểu đồ đánh giá
@@ -70,7 +70,7 @@
 ### Data Engineering Module
 - **Xử lý Missing Values:** Điền 0.0 cho các môn sinh viên không học.
 - **Feature Mapping:** Sử dụng `pdf_extractor.py` để lấy tên tiếng Việt chuẩn của môn học. Gán nhãn qua `SKILL_MATRIX` (5 cụm nghề nghiệp).
-- **Visualization:** Horizontal Bar Chart (Plotly) trực quan hóa điểm 20 môn.
+- **Visualization:** Horizontal Bar Chart (Plotly) trực quan hóa điểm 24 môn.
 - **Caching:** Bắt buộc dùng `@st.cache_resource` khi load model để tránh tràn RAM server.
 - **Export:** Sử dụng `io.BytesIO()` để tạo file Excel ảo trên RAM trước khi gọi nút Download, không lưu file Excel vật lý ra ổ cứng.
 
