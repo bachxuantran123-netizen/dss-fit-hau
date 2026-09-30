@@ -4,32 +4,33 @@
 
 ## 📋 Mô tả
 
-Ứng dụng **Personal DSS (Decision Support System)** sử dụng kiến trúc **Hybrid 2 tầng** để:
+Ứng dụng **Personal DSS (Decision Support System)** sử dụng kiến trúc **Hybrid 2 tầng + OCR** để:
+- **Trích xuất điểm tự động từ ảnh** bảng điểm bằng AI-OCR (EasyOCR), hỗ trợ ảnh chụp bảng điểm giấy, screenshot portal trường, screenshot PDF.
 - **Gán nhãn thông minh** bằng Content-Based Filtering (Cosine Similarity) giữa vector điểm sinh viên và Career Profile Vectors.
 - **Dự đoán chuyên ngành** phù hợp nhất trong 5 hướng nghề nghiệp: Software Engineer, Data Engineer, AI Engineer, Security Engineer, System/DevOps.
 - **Giải thích minh bạch** lý do đề xuất thông qua Explainable AI (XAI) bằng ngôn ngữ tự nhiên.
 - **Trực quan hóa** điểm số bằng biểu đồ (Horizontal Bar Chart) và xuất báo cáo kết quả định dạng Excel.
 
-## 🏗️ Kiến trúc Hệ thống (Hybrid 3 Tầng)
+## 🏗️ Kiến trúc Hệ thống (Hybrid 3 Tầng + OCR)
 
 ```
 Offline Training Pipeline                                  Online Inference (Web)
-┌────────────────────────────────────────┐                ┌────────────────────────┐
-│  1. pdf_extractor.py                   │                │       app.py           │
-│  (Cào điểm từ PDF)                     │                │  (Streamlit Wizard UI) │
-│         ↓                              │                │          ↑             │
-│  2. data_pipeline.py                   │                │  Load dss_brain.pkl    │
-│  ┌─────────────────────────────────┐   │                │  predict() + XAI       │
-│  │ Tầng 1: Content-Based Filtering │   │                │          ↓             │
-│  │ Cosine Sim(SV, Career Profile)  │   │                │  Tầng 3: Hybrid Score  │
-│  │ → Gán nhãn 5 chuyên ngành      │   │                │  (AI Score + Sở thích) │
-│  └─────────────────────────────────┘   │                └────────────────────────┘
-│         ↓                              │
-│  3. train_core.py                      │ ── Xuất .pkl ──▶
-│  ┌─────────────────────────────────┐   │
-│  │ Tầng 2: Decision Tree           │   │
-│  │ GridSearchCV + Evaluation       │   │
-│  │ → Học từ nhãn, dự đoán + XAI    │   │
+┌────────────────────────────────────────┐                ┌─────────────────────────────────┐
+│  1. pdf_extractor.py                   │                │         app.py                  │
+│  (Cào điểm từ PDF)                     │                │    (Streamlit Wizard UI)        │
+│         ↓                              │                │                                 │
+│  2. data_pipeline.py                   │                │  ┌───────────────────────────┐  │
+│  ┌─────────────────────────────────┐   │                │  │ OCR Layer (image_ocr.py)  │  │
+│  │ Tầng 1: Content-Based Filtering │   │                │  │ Upload ảnh → EasyOCR      │  │
+│  │ Cosine Sim(SV, Career Profile)  │   │                │  │ → Trích xuất điểm 24 môn  │  │
+│  │ → Gán nhãn 5 chuyên ngành      │   │                │  └─────────────┬─────────────┘  │
+│  └─────────────────────────────────┘   │                │                ↓                │
+│         ↓                              │                │  Load dss_brain.pkl             │
+│  3. train_core.py                      │ ── Xuất .pkl ──▶  predict() + XAI                │
+│  ┌─────────────────────────────────┐   │                │                ↓                │
+│  │ Tầng 2: Decision Tree           │   │                │  Tầng 3: Hybrid Score           │
+│  │ GridSearchCV + Evaluation       │   │                │  (AI Score + Sở thích)          │
+│  │ → Học từ nhãn, dự đoán + XAI    │   │                └─────────────────────────────────┘
 │  └─────────────────────────────────┘   │
 └────────────────────────────────────────┘
 ```
@@ -38,6 +39,7 @@ Offline Training Pipeline                                  Online Inference (Web
 
 | Tầng | Phương pháp | Vai trò |
 |------|-------------|---------|
+| **OCR** | EasyOCR (Vietnamese + English) | Upload ảnh bảng điểm → AI tự động trích xuất tên môn & điểm số → Fuzzy keyword matching sang 24 môn chuẩn. |
 | **Tầng 1** | Content-Based Filtering (Cosine Similarity) | Gán nhãn cho dữ liệu training — thay thế Skill Matrix heuristic cũ. So sánh pattern điểm 24 môn với 5 Career Profile Vectors. |
 | **Tầng 2** | Decision Tree (GridSearchCV) | Học từ nhãn đã gán → dự đoán nhanh cho user mới + cung cấp giải thích (XAI) qua decision_path. |
 | **Tầng 3** | Heuristic Rules (Hybrid Score) | Tích hợp online: Kết hợp xác suất từ AI với Trọng số Sở thích người dùng để đưa ra Bảng Xếp Hạng cá nhân hóa chính xác nhất. |
@@ -55,7 +57,8 @@ DSS FIT-HAU/
 │   ├── merge_new_data.py   → Hợp nhất dữ liệu điểm 4 môn mới vào file điểm gốc
 │   ├── data_pipeline.py    → Xử lý dữ liệu & Gán nhãn bằng Content-Based Filtering (Cosine Similarity)
 │   ├── train_core.py       → Huấn luyện Decision Tree (GridSearchCV)
-│   └── app.py              → Giao diện Web Streamlit (Wizard Flow, XAI, Hybrid Score)
+│   ├── image_ocr.py        → 🆕 Module OCR: Trích xuất điểm từ ảnh bảng điểm (EasyOCR)
+│   └── app.py              → Giao diện Web Streamlit (Wizard Flow, OCR Upload, XAI, Hybrid Score)
 ├── models/                 → File mô hình .pkl (Joblib)
 ├── reports/                → Biểu đồ đánh giá (Confusion Matrix, Tree Plot)
 ├── documents/              → Tài liệu dự án (Backlog, kế hoạch, kiến trúc)
@@ -99,8 +102,20 @@ python src/data_pipeline.py
 python src/train_core.py
 
 # Bước 4: Khởi động Giao diện Web UI
-streamlit run src/app.py
+python -m streamlit run src/app.py
 ```
+
+### 5. Sử dụng tính năng OCR (Upload ảnh bảng điểm)
+
+1. Truy cập Web UI → Nhập thông tin & sở thích (Step 1) → Bấm **"Tiếp theo"**
+2. Tại Step 2, **upload ảnh bảng điểm** (PNG, JPG, JPEG, BMP, TIFF, WEBP)
+3. Bấm **"🔍 Trích xuất điểm từ ảnh"** → AI-OCR tự động phân tích
+4. Tại Step 2.5, **kiểm tra & chỉnh sửa** điểm đã trích xuất nếu cần
+5. Bấm **"Hoàn tất & Xem Khuyến nghị"** → Xem kết quả AI
+
+> **Lưu ý:** Lần đầu chạy OCR sẽ mất 1-2 phút để tải model EasyOCR (Vietnamese + English). Các lần sau sẽ nhanh hơn do model được cache.
+>
+> **Mẹo:** Ảnh nên rõ nét, không bị mờ/nghiêng, tên môn và điểm hiển thị đầy đủ để OCR đọc chính xác nhất.
 
 ## 🗺️ Roadmap & Tiến độ
 
@@ -110,6 +125,7 @@ streamlit run src/app.py
 | Sprint 2 | Huấn luyện mô hình (Decision Tree, GridSearchCV, Evaluation) | ✅ Done |
 | Sprint 3 | Giao diện và Ứng dụng (Streamlit, Dynamic Form, XAI, Export Excel) | ✅ Done |
 | Sprint 4 | Nâng cấp Bài cuối kỳ (Giao diện Wizard, Hybrid Score AI + Sở thích, Thu thập Feedback) | ✅ Done |
+| Sprint 5 | 🆕 OCR Upload ảnh bảng điểm (EasyOCR, Fuzzy Matching, Review & Edit Flow) | ✅ Done |
 
 ## 🛠️ Tech Stack
 
@@ -123,6 +139,8 @@ streamlit run src/app.py
 - **Seaborn / Matplotlib** — Vẽ Confusion Matrix & Tree Plot
 - **Openpyxl** — Xuất báo cáo định dạng Excel
 - **Joblib** — Đóng gói mô hình AI
+- **EasyOCR** — 🆕 Trích xuất text từ ảnh bảng điểm (hỗ trợ tiếng Việt)
+- **Pillow** — 🆕 Xử lý ảnh đầu vào (resize, convert format)
 
 ## 👥 Nhóm phát triển
 

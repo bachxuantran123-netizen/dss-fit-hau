@@ -7,6 +7,7 @@ Architecture (Hybrid 2 tầng + Rule-based Preferences):
     - Tầng 1: Content-Based Filtering (Cosine Similarity) → Gán nhãn
     - Tầng 2: Decision Tree → Dự đoán + XAI
     - Tầng 3 (Mới): Hybrid Score = AI Score + Preference Bonus
+    - OCR (Mới): Upload ảnh bảng điểm → Tự động trích xuất điểm
 """
 
 import os
@@ -17,6 +18,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import joblib
+from PIL import Image
+
+# Local OCR module
+from image_ocr import extract_scores_from_image, build_full_score_dict, STANDARD_SUBJECTS
 
 # ============================================================
 # CONSTANTS & CONFIGS
@@ -295,59 +300,216 @@ def main() -> None:
                 st.session_state.step = 2
                 st.rerun()
 
-        # --- STEP 2: SCORE INPUT ---
+        # --- STEP 2: UPLOAD ẢNH BẢNG ĐIỂM (Hỗ trợ nhiều ảnh) ---
         elif st.session_state.step == 2:
-            st.subheader("📚 Năng lực học tập")
+            st.subheader("📸 Upload ảnh bảng điểm")
             greeting_name = st.session_state.user_name if st.session_state.user_name else "bạn"
-            st.info(f"Chào **{greeting_name}**, vui lòng nhập điểm cho các môn đã học. Tích bỏ chọn nếu chưa học môn đó.")
+            st.info(
+                f"Chào **{greeting_name}**, vui lòng tải lên ảnh bảng điểm của bạn. "
+                "Hệ thống sẽ tự động đọc và trích xuất điểm từ ảnh.\n\n"
+                "**Hỗ trợ:** Ảnh chụp bảng điểm giấy, screenshot portal trường, screenshot file PDF.\n\n"
+                "💡 **Có thể upload 1 hoặc nhiều ảnh** — nếu bảng điểm dài, hãy chụp nhiều ảnh rồi chọn tất cả cùng lúc."
+            )
+            
+            # File uploader — hỗ trợ nhiều ảnh
+            uploaded_files = st.file_uploader(
+                "Chọn ảnh bảng điểm (có thể chọn nhiều ảnh)",
+                type=["png", "jpg", "jpeg", "bmp", "tiff", "webp"],
+                help="Chấp nhận các định dạng: PNG, JPG, JPEG, BMP, TIFF, WEBP. Giữ Ctrl để chọn nhiều ảnh.",
+                key="image_uploader",
+                accept_multiple_files=True
+            )
+            
+            if uploaded_files:
+                # Hiển thị tất cả ảnh đã upload
+                st.markdown(f"**📂 Đã tải lên {len(uploaded_files)} ảnh:**")
+                
+                cols_preview = st.columns(min(len(uploaded_files), 3))
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    with cols_preview[idx % 3]:
+                        img = Image.open(uploaded_file)
+                        st.image(img, caption=f"📄 Ảnh {idx + 1}: {uploaded_file.name}", use_container_width=True)
+                
+                # Nút bấm để bắt đầu OCR
+                if st.button("🔍 Trích xuất điểm từ ảnh", type="primary", use_container_width=True):
+                    with st.spinner(f"⏳ Đang phân tích {len(uploaded_files)} ảnh bằng AI-OCR... (lần đầu có thể mất 1-2 phút để tải model)"):
+                        try:
+                            # Gộp kết quả OCR từ tất cả ảnh
+                            merged_scores: dict[str, float] = {}
+                            all_matched_lines: list[dict] = []
+                            all_unmatched_lines: list[str] = []
+                            all_raw_text: list[str] = []
+                            all_warnings: list[str] = []
+                            
+                            for idx, uploaded_file in enumerate(uploaded_files):
+                                uploaded_file.seek(0)  # Reset file pointer
+                                image = Image.open(uploaded_file)
+                                
+                                st.toast(f"🔄 Đang xử lý ảnh {idx + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
+                                ocr_result_single = extract_scores_from_image(image)
+                                
+                                # Gộp điểm — giữ điểm cao nhất nếu trùng môn
+                                for subject, score in ocr_result_single["scores"].items():
+                                    if subject not in merged_scores or score > merged_scores[subject]:
+                                        merged_scores[subject] = score
+                                
+                                # Gộp thông tin debug
+                                for ml in ocr_result_single.get("matched_lines", []):
+                                    ml["source_image"] = uploaded_file.name
+                                    all_matched_lines.append(ml)
+                                
+                                for ul in ocr_result_single.get("unmatched_lines", []):
+                                    all_unmatched_lines.append(f"[{uploaded_file.name}] {ul}")
+                                
+                                all_raw_text.extend(ocr_result_single.get("raw_text", []))
+                            
+                            # Tạo warnings tổng hợp
+                            if not merged_scores:
+                                all_warnings.append(
+                                    "⚠️ Không trích xuất được điểm nào từ tất cả ảnh. "
+                                    "Vui lòng kiểm tra chất lượng ảnh."
+                                )
+                            elif len(merged_scores) < 5:
+                                all_warnings.append(
+                                    f"⚠️ Chỉ trích xuất được {len(merged_scores)}/24 môn từ {len(uploaded_files)} ảnh. "
+                                    "Kết quả có thể không chính xác."
+                                )
+                            
+                            # Lưu kết quả gộp vào session state
+                            merged_result = {
+                                "scores": merged_scores,
+                                "raw_text": all_raw_text,
+                                "matched_lines": all_matched_lines,
+                                "unmatched_lines": all_unmatched_lines,
+                                "warnings": all_warnings,
+                                "num_images": len(uploaded_files),
+                            }
+                            
+                            st.session_state.ocr_result = merged_result
+                            st.session_state.ocr_scores = merged_scores.copy()
+                            st.session_state.step = 2.5
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Lỗi khi đọc ảnh: {e}")
+            else:
+                st.markdown(
+                    "#### 💡 Mẹo để OCR chính xác hơn\n"
+                    "- Ảnh nên rõ nét, không bị mờ hoặc nghiêng quá nhiều\n"
+                    "- Đảm bảo tên môn học và điểm số đều hiển thị rõ ràng\n"
+                    "- **Bảng điểm dài?** Chụp nhiều ảnh, rồi chọn tất cả cùng lúc khi upload\n"
+                    "- Giữ **Ctrl** (Windows) hoặc **Cmd** (Mac) để chọn nhiều file\n"
+                )
+            
+            st.divider()
+            if st.button("⬅️ Quay lại", use_container_width=True):
+                st.session_state.step = 1
+                st.rerun()
 
+        # --- STEP 2.5: REVIEW & CHỈNH SỬA ĐIỂM OCR ---
+        elif st.session_state.step == 2.5:
+            st.subheader("✏️ Kiểm tra & Chỉnh sửa điểm đã trích xuất")
+            
+            ocr_result = st.session_state.get('ocr_result', {})
+            ocr_scores = st.session_state.get('ocr_scores', {})
+            
+            # Hiển thị cảnh báo nếu có
+            for warning in ocr_result.get('warnings', []):
+                st.warning(warning)
+            
+            # Thống kê OCR
+            n_extracted = len(ocr_scores)
+            n_total = len(STANDARD_SUBJECTS)
+            n_images = ocr_result.get('num_images', 1)
+            
+            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+            with col_stat1:
+                st.metric("🖼️ Số ảnh đã xử lý", n_images)
+            with col_stat2:
+                st.metric("📊 Số môn trích xuất", f"{n_extracted}/{n_total}")
+            with col_stat3:
+                st.metric("✅ Số dòng match", len(ocr_result.get('matched_lines', [])))
+            with col_stat4:
+                st.metric("❓ Không nhận diện", len(ocr_result.get('unmatched_lines', [])))
+            
+            # Chi tiết OCR (expandable)
+            with st.expander("🔍 Xem chi tiết OCR (Debug)"):
+                if ocr_result.get('matched_lines'):
+                    st.markdown("**Các dòng đã match thành công:**")
+                    for ml in ocr_result['matched_lines']:
+                        conf_emoji = "🟢" if ml['confidence'] > 0.7 else "🟡" if ml['confidence'] > 0.4 else "🔴"
+                        source = f" 📎 _{ml['source_image']}_" if ml.get('source_image') else ""
+                        st.markdown(
+                            f"- {conf_emoji} **{ml['subject']}** = `{ml['score']}` "
+                            f"(OCR: _{ml['ocr_text']}_){source}"
+                        )
+                
+                if ocr_result.get('unmatched_lines'):
+                    st.markdown("\n**Các dòng không nhận diện được:**")
+                    for ul in ocr_result['unmatched_lines']:
+                        st.markdown(f"- ❓ _{ul}_")
+            
+            st.divider()
+            st.markdown(
+                "#### 📝 Chỉnh sửa điểm\n"
+                "Điểm đã được trích xuất tự động từ ảnh. "
+                "Bạn có thể chỉnh sửa nếu OCR đọc sai, hoặc bỏ chọn nếu chưa học môn đó."
+            )
+            
+            # Hiển thị form chỉnh sửa điểm
             scores_dict = {}
             cols = st.columns(3)
             for i, feature in enumerate(features):
                 with cols[i % 3]:
-                    st.markdown(f"**{feature}**")
+                    has_score = feature in ocr_scores
+                    default_score = ocr_scores.get(feature, 0.0)
                     
-                    # Checkbox to toggle studied state
-                    studied_key = f"studied_{feature}"
-                    is_studied = st.checkbox("Đã có điểm", value=st.session_state.get(studied_key, True), key=f"check_{feature}")
+                    # Hiển thị icon cho môn đã trích xuất vs chưa
+                    icon = "✅" if has_score else "⬜"
+                    st.markdown(f"{icon} **{feature}**")
                     
-                    score_val = st.session_state.get(f"score_{feature}", 0.0)
+                    # Checkbox: đã có điểm hay chưa
+                    studied_key = f"ocr_studied_{feature}"
+                    is_studied = st.checkbox(
+                        "Đã có điểm", 
+                        value=has_score, 
+                        key=f"ocr_check_{feature}"
+                    )
+                    
                     input_val = st.number_input(
-                        f"Điểm {feature}", min_value=MIN_SCORE, max_value=MAX_SCORE, 
-                        value=score_val, step=0.1, key=f"input_score_{feature}",
-                        label_visibility="collapsed", disabled=not is_studied
+                        f"Điểm {feature}", 
+                        min_value=MIN_SCORE, 
+                        max_value=MAX_SCORE,
+                        value=float(default_score) if has_score else 0.0, 
+                        step=0.1, 
+                        key=f"ocr_input_{feature}",
+                        label_visibility="collapsed", 
+                        disabled=not is_studied
                     )
                     
                     if is_studied:
                         scores_dict[feature] = input_val
                     else:
                         scores_dict[feature] = -1.0
-                        
+                    
                     st.markdown("---")
             
             st.divider()
-            col_back, col_next = st.columns([1, 4])
+            col_back, col_reupload, col_next = st.columns([1, 1, 3])
             with col_back:
-                if st.button("⬅️ Quay lại", use_container_width=True):
-                    for feature in features:
-                        is_stud = st.session_state[f"check_{feature}"]
-                        st.session_state[f"studied_{feature}"] = is_stud
-                        if is_stud:
-                            st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
-                        else:
-                            st.session_state[f"score_{feature}"] = -1.0
+                if st.button("⬅️ Quay lại", use_container_width=True, key="back_from_review"):
                     st.session_state.step = 1
+                    st.rerun()
+            with col_reupload:
+                if st.button("📸 Upload ảnh khác", use_container_width=True):
+                    # Reset OCR state
+                    if 'ocr_result' in st.session_state:
+                        del st.session_state.ocr_result
+                    if 'ocr_scores' in st.session_state:
+                        del st.session_state.ocr_scores
+                    st.session_state.step = 2
                     st.rerun()
             with col_next:
                 if st.button("🔮 Hoàn tất & Xem Khuyến nghị", type="primary", use_container_width=True):
-                    for feature in features:
-                        is_stud = st.session_state[f"check_{feature}"]
-                        st.session_state[f"studied_{feature}"] = is_stud
-                        if is_stud:
-                            st.session_state[f"score_{feature}"] = st.session_state[f"input_score_{feature}"]
-                        else:
-                            st.session_state[f"score_{feature}"] = -1.0
-                    
                     is_valid, err_msg = validate_scores(scores_dict)
                     if not is_valid:
                         st.error(err_msg)
@@ -363,7 +525,7 @@ def main() -> None:
             scores_dict = st.session_state.scores_dict
             
             if st.button("⬅️ Chỉnh sửa thông tin/điểm", key="back_to_2"):
-                st.session_state.step = 2
+                st.session_state.step = 2.5 if st.session_state.get('ocr_result') else 2
                 st.rerun()
                 
             input_df = pd.DataFrame([scores_dict])
