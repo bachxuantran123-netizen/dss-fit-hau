@@ -134,8 +134,8 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # Identify score columns (all except metadata)
     score_cols = [c for c in df_clean.columns if c not in NON_FEATURE_COLUMNS]
 
-    for col in score_cols:
-        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(-1.0).round(1)
+    # Pandas vectorization (No for loop)
+    df_clean[score_cols] = df_clean[score_cols].apply(pd.to_numeric, errors='coerce').fillna(-1.0).round(1)
 
     return df_clean
 
@@ -179,9 +179,7 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
         print(f"      ⚠️  Missing features (sẽ dùng giá trị 0): {missing_features}")
 
     # 1. Trích xuất ma trận điểm theo FEATURE_ORDER, điền 0.0 cho các môn thiếu
-    # Loại bỏ điểm -1.0 (chưa học) thành 0.0 để tính Cosine Sim
     score_matrix = df_labeled.reindex(columns=FEATURE_ORDER, fill_value=0.0).values
-    score_matrix = np.maximum(score_matrix, 0.0)
 
     # 2. Xây dựng ma trận Profile
     careers = list(CAREER_PROFILES.keys())
@@ -200,12 +198,11 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     # Lấy nhãn cao nhất
     best_career_indices = np.argmax(similarity_matrix, axis=1)
-    labels = [careers[i] for i in best_career_indices]
+    labels = np.array([careers[i] for i in best_career_indices])
 
-    # Fallback cho trường hợp toàn 0
+    # Fallback cho trường hợp toàn 0 (dùng vectorization mask, không dùng for loop)
     zero_norm_mask = (student_norms == 1e-10)
-    for idx in np.where(zero_norm_mask)[0]:
-        labels[idx] = "Software Engineer"
+    labels[zero_norm_mask] = "Software Engineer"
 
     df_labeled[TARGET_COLUMN] = labels
 
