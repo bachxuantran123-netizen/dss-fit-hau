@@ -452,9 +452,18 @@ def main() -> None:
                 )
             
             st.divider()
-            if st.button("⬅️ Quay lại", use_container_width=True):
-                st.session_state.step = 1
-                st.rerun()
+            col_back2, col_manual = st.columns(2)
+            with col_back2:
+                if st.button("⬅️ Quay lại", use_container_width=True):
+                    st.session_state.step = 1
+                    st.rerun()
+            with col_manual:
+                if st.button("⌨️ Nhập điểm thủ công (không cần ảnh)", use_container_width=True):
+                    # Bỏ qua OCR, vào thẳng form nhập điểm với điểm trống
+                    st.session_state.ocr_result = {}
+                    st.session_state.ocr_scores = {}
+                    st.session_state.step = 2.5
+                    st.rerun()
 
         # --- STEP 2.5: REVIEW & CHỈNH SỬA ĐIỂM OCR ---
         elif st.session_state.step == 2.5:
