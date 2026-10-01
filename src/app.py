@@ -22,6 +22,7 @@ from PIL import Image
 
 # Local OCR module
 from image_ocr import extract_scores_from_image, build_full_score_dict, STANDARD_SUBJECTS
+from pdf_extractor import extract_scores_from_student_pdf
 
 # ============================================================
 # CONSTANTS & CONFIGS
@@ -311,11 +312,11 @@ def main() -> None:
                 "💡 **Có thể upload 1 hoặc nhiều ảnh** — nếu bảng điểm dài, hãy chụp nhiều ảnh rồi chọn tất cả cùng lúc."
             )
             
-            # File uploader — hỗ trợ nhiều ảnh
+            # File uploader — hỗ trợ nhiều ảnh/pdf
             uploaded_files = st.file_uploader(
-                "Chọn ảnh bảng điểm (có thể chọn nhiều ảnh)",
-                type=["png", "jpg", "jpeg", "bmp", "tiff", "webp"],
-                help="Chấp nhận các định dạng: PNG, JPG, JPEG, BMP, TIFF, WEBP. Giữ Ctrl để chọn nhiều ảnh.",
+                "Chọn file/ảnh bảng điểm (có thể chọn nhiều file)",
+                type=["pdf", "png", "jpg", "jpeg", "bmp", "tiff", "webp"],
+                help="Chấp nhận các định dạng: PDF, PNG, JPG, JPEG, BMP, TIFF, WEBP. Giữ Ctrl để chọn nhiều file.",
                 key="image_uploader",
                 accept_multiple_files=True
             )
@@ -327,12 +328,15 @@ def main() -> None:
                 cols_preview = st.columns(min(len(uploaded_files), 3))
                 for idx, uploaded_file in enumerate(uploaded_files):
                     with cols_preview[idx % 3]:
-                        img = Image.open(uploaded_file)
-                        st.image(img, caption=f"📄 Ảnh {idx + 1}: {uploaded_file.name}", use_container_width=True)
+                        if uploaded_file.name.lower().endswith(".pdf"):
+                            st.info(f"📄 PDF {idx + 1}: {uploaded_file.name}")
+                        else:
+                            img = Image.open(uploaded_file)
+                            st.image(img, caption=f"🖼️ Ảnh {idx + 1}: {uploaded_file.name}", use_container_width=True)
                 
-                # Nút bấm để bắt đầu OCR
-                if st.button("🔍 Trích xuất điểm từ ảnh", type="primary", use_container_width=True):
-                    with st.spinner(f"⏳ Đang phân tích {len(uploaded_files)} ảnh bằng AI-OCR... (lần đầu có thể mất 1-2 phút để tải model)"):
+                # Nút bấm để bắt đầu trích xuất
+                if st.button("🔍 Trích xuất điểm từ file", type="primary", use_container_width=True):
+                    with st.spinner(f"⏳ Đang phân tích {len(uploaded_files)} file bằng AI-OCR... (lần đầu có thể mất 1-2 phút để tải model)"):
                         try:
                             # Gộp kết quả OCR từ tất cả ảnh
                             merged_scores: dict[str, float] = {}
@@ -343,10 +347,57 @@ def main() -> None:
                             
                             for idx, uploaded_file in enumerate(uploaded_files):
                                 uploaded_file.seek(0)  # Reset file pointer
-                                image = Image.open(uploaded_file)
                                 
-                                st.toast(f"🔄 Đang xử lý ảnh {idx + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
-                                ocr_result_single = extract_scores_from_image(image)
+                                st.toast(f"🔄 Đang xử lý file {idx + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
+                                
+                                if uploaded_file.name.lower().endswith(".pdf"):
+                                    # Xử lý PDF
+                                    save_csv_path = os.path.join("data", "processed", f"{os.path.splitext(uploaded_file.name)[0]}.csv")
+                                    
+                                    import fitz
+                                    try:
+                                        doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+                                        uploaded_file.seek(0)
+                                        
+                                        pdf_text = ""
+                                        for page in doc:
+                                            pdf_text += page.get_text()
+                                            
+                                        if len(pdf_text.strip()) > 20:
+                                            # PDF chứa text
+                                            ocr_result_single = extract_scores_from_student_pdf(uploaded_file, save_csv_path=save_csv_path)
+                                        else:
+                                            # PDF chứa ảnh (scan)
+                                            ocr_result_single = {"scores": {}, "raw_text": [], "matched_lines": [], "unmatched_lines": [], "warnings": []}
+                                            for i, page in enumerate(doc):
+                                                pix = page.get_pixmap(dpi=150)
+                                                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                                                
+                                                page_result = extract_scores_from_image(img)
+                                                
+                                                for subject, score in page_result["scores"].items():
+                                                    if subject not in ocr_result_single["scores"] or score > ocr_result_single["scores"][subject]:
+                                                        ocr_result_single["scores"][subject] = score
+                                                        
+                                                ocr_result_single["raw_text"].extend(page_result.get("raw_text", []))
+                                                ocr_result_single["matched_lines"].extend(page_result.get("matched_lines", []))
+                                                ocr_result_single["unmatched_lines"].extend(page_result.get("unmatched_lines", []))
+                                                
+                                            if not ocr_result_single["scores"]:
+                                                ocr_result_single["warnings"].append("⚠️ Không trích xuất được điểm nào từ PDF ảnh.")
+                                                
+                                            if ocr_result_single["scores"] and save_csv_path:
+                                                os.makedirs(os.path.dirname(save_csv_path), exist_ok=True)
+                                                df = pd.DataFrame(list(ocr_result_single["scores"].items()), columns=["Tên môn", "Điểm"])
+                                                df.to_csv(save_csv_path, index=False, encoding='utf-8-sig')
+                                                
+                                    except Exception as e:
+                                        st.error(f"Lỗi đọc PDF: {e}")
+                                        ocr_result_single = {"scores": {}, "raw_text": [], "matched_lines": [], "unmatched_lines": [], "warnings": [f"Lỗi: {e}"]}
+                                else:
+                                    # Xử lý Ảnh
+                                    image = Image.open(uploaded_file)
+                                    ocr_result_single = extract_scores_from_image(image)
                                 
                                 # Gộp điểm — giữ điểm cao nhất nếu trùng môn
                                 for subject, score in ocr_result_single["scores"].items():

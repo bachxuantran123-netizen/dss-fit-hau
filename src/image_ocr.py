@@ -16,6 +16,7 @@ import unicodedata
 import numpy as np
 from PIL import Image
 import easyocr
+import os
 
 # ============================================================
 # CONSTANTS — 24 MÔN HỌC CHUẨN (khớp với data_pipeline.py)
@@ -76,7 +77,6 @@ SUBJECT_KEYWORDS: dict[str, str] = {
     "cong nghệ phan mem": "CÔNG NGHỆ PHẦN MỀM",
     "cong nghe phan mem": "CÔNG NGHỆ PHẦN MỀM",
     "cnpm": "CÔNG NGHỆ PHẦN MỀM",
-    "phần mềm": "CÔNG NGHỆ PHẦN MỀM",
     # --- CƠ SỞ DỮ LIỆU ---
     "cơ sở dữ liệu": "CƠ SỞ DỮ LIỆU",
     "co so du lieu": "CƠ SỞ DỮ LIỆU",
@@ -130,8 +130,6 @@ SUBJECT_KEYWORDS: dict[str, str] = {
     "kỹ thuat lap trinh": "KỸ THUẬT LẬP TRÌNH",
     "kỹ thuật lạp trình": "KỸ THUẬT LẬP TRÌNH",
     "ktlt": "KỸ THUẬT LẬP TRÌNH",
-    "lập trình": "KỸ THUẬT LẬP TRÌNH",  # Fallback siêu mạnh (nhờ longest-match, nó sẽ không đè lên Lập trình C#/Java/Web/OOP)
-    "lap trinh": "KỸ THUẬT LẬP TRÌNH",
     # --- KỸ THUẬT ĐỒ HOẠ MÁY TÍNH ---
     "kỹ thuật đồ họa máy tính": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
     "kỹ thuật đồ hoạ máy tính": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
@@ -148,9 +146,9 @@ SUBJECT_KEYWORDS: dict[str, str] = {
     "oop": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
     "lthdtg": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
     # --- LẬP TRÌNH WEB ---
+    "lập trình web": "LẬP TRÌNH WEB",
     "công nghệ web": "LẬP TRÌNH WEB",
     "cong nghe web": "LẬP TRÌNH WEB",
-    "web": "LẬP TRÌNH WEB",
     # --- MẠNG MÁY TÍNH ---
     "mạng máy tính": "MẠNG MÁY TÍNH",
     "mang may tinh": "MẠNG MÁY TÍNH",
@@ -159,7 +157,6 @@ SUBJECT_KEYWORDS: dict[str, str] = {
     "nhap mon cntt va truyen thong": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
     "nhập môn cntt": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
     "nhap mon cntt": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
-    "nhập môn": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
     # --- PHÂN TÍCH VÀ THIẾT KẾ HTTT ---
     "phân tích và thiết kế hệ thống thông tin": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
     "phân tích và thiết kế httt": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
@@ -200,6 +197,48 @@ SUBJECT_KEYWORDS: dict[str, str] = {
     "xu ly anh": "XỬ LÝ ẢNH",
     "kỹ thuật xử lý ảnh": "XỬ LÝ ẢNH",
     "ky thuat xu ly anh": "XỬ LÝ ẢNH",
+    # --- SUBJECT CODES (Mã học phần) ---
+    "th5201": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
+    "th4303": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
+    "th4304": "KỸ THUẬT LẬP TRÌNH",
+    "th5203": "HỆ ĐIỀU HÀNH",
+    "th4319": "KIẾN TRÚC MÁY TÍNH",
+    "th4305": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
+    "th5217": "CƠ SỞ DỮ LIỆU",
+    "th4306": "CÔNG NGHỆ PHẦN MỀM",
+    "th4320": "TRÍ TUỆ NHÂN TẠO",
+    "th5206": "MẠNG MÁY TÍNH",
+    "th4316": "JAVA",
+    "th5208": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
+    "th5221": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
+    "th5210": "AN TOÀN VÀ BẢO MẬT HTTT",
+    "th4315": "C#",
+    "th5231": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
+    "th5211": "HỆ ĐIỀU HÀNH LINUX",
+    "th4309": "LẬP TRÌNH WEB",
+    "th4318": "PHÁT TRIỂN PHẦN MỀM",
+    "th5213": "LẬP TRÌNH MẠNG",
+    "th5216": "ĐỒ HỌA VÀ HIỆN THỰC ẢO",
+    "th5218": "QUẢN TRỊ MẠNG MÁY TÍNH",
+    "th5219": "AN NINH MẠNG",
+    "th5205": "XỬ LÝ TÍN HIỆU SỐ",
+    "th5302": "ĐỒ ÁN TỐT NGHIỆP",
+    # --- PARTIAL KEYWORDS FALLBACK ---
+    "cấu trúc dữ liệu": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
+    "liệu và giải thuật": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
+    "lập trình hướng đối": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
+    "hướng đối": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
+    "cơ sở dữ": "CƠ SỞ DỮ LIỆU",
+    "trí tuệ nhân": "TRÍ TUỆ NHÂN TẠO",
+    "mạng máy": "MẠNG MÁY TÍNH",
+    "phân tích thiết kế": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
+    "thiết kế hệ": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
+    "bảo mật hệ thống": "AN TOÀN VÀ BẢO MẬT HTTT",
+    "c# và công": "C# VÀ CÔNG NGHỆ .NET",
+    "kỹ thuật đồ": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
+    "hệ điều": "HỆ ĐIỀU HÀNH",
+    "xử lý tín": "XỬ LÝ TÍN HIỆU SỐ",
+    "kỹ năng": "KỸ NĂNG MỀM", # assuming TH5224 Kỹ năng QT
 }
 
 # Regex pattern: số thực (7.5, 8,3, 10.0) hoặc số nguyên (7, 8, 9, 10)
@@ -255,8 +294,15 @@ def match_subject(text: str) -> str | None:
     normalized = normalize_text(text)
     normalized_no_accents = remove_accents(normalized)
     
+    # Pass 0: Match Mã học phần (ưu tiên cao nhất, vì nó là định danh duy nhất)
+    # Ví dụ: "th4305", "tc2611", v.v. Các mã có dạng 2 chữ cái + 4 số
+    subject_codes = [kw for kw in SUBJECT_KEYWORDS.keys() if re.match(r'^[a-z]{2}\d{4}$', kw)]
+    for code in subject_codes:
+        if re.search(rf'\b{code}\b', normalized):
+            return SUBJECT_KEYWORDS[code]
+            
     # Sort keywords by length (descending) for longest-match-first
-    sorted_keywords = sorted(SUBJECT_KEYWORDS.keys(), key=len, reverse=True)
+    sorted_keywords = sorted([k for k in SUBJECT_KEYWORDS.keys() if k not in subject_codes], key=len, reverse=True)
     
     # Pass 1: Match có dấu (chính xác hơn)
     for keyword in sorted_keywords:
@@ -357,71 +403,81 @@ def extract_scores_from_image(image_data) -> dict:
     # ============================================================
     # STRATEGY 2: Duyệt từng dòng, tìm tên môn + điểm
     # ============================================================
+    pending_text = ""
+    pending_conf = 1.0
+    
     for line_items in lines:
         # Sắp xếp items trong dòng theo X (left-to-right)
         line_items.sort(key=lambda item: item[0][0][0])
         
         # Gộp text của dòng
         full_line_text = " ".join([item[1] for item in line_items])
+        line_conf = min([item[2] for item in line_items]) if line_items else 1.0
         
-        # Thử match tên môn
-        subject = match_subject(full_line_text)
+        # Nối với text chờ trước đó (nếu có)
+        combined_text = (pending_text + " " + full_line_text).strip()
+        combined_conf = min(pending_conf, line_conf)
         
+        # Thử xem dòng mới có chứa một môn học HOÀN TOÀN KHÁC không
+        # Nếu có, ta không nên nối vào pending_text cũ vì đã sang môn mới
+        new_line_subject = match_subject(full_line_text)
+        
+        # Thử match trên chuỗi đã nối
+        subject = match_subject(combined_text)
+        
+        # Nếu dòng mới là một môn khác, và chuỗi nối vẫn match môn cũ,
+        # có nghĩa là ta đã ghép nhầm 2 môn với nhau.
+        if new_line_subject and pending_text:
+            pending_subj = match_subject(pending_text)
+            if pending_subj and new_line_subject != pending_subj:
+                # Đã sang môn mới! Reset chuỗi nối
+                combined_text = full_line_text
+                combined_conf = line_conf
+                subject = new_line_subject
+        
+        if not subject:
+            # Nếu chuỗi nối không match, thử match riêng lẻ (trường hợp chuỗi pending là rác)
+            subject = new_line_subject
+            if subject:
+                combined_text = full_line_text
+                combined_conf = line_conf
+                
         if subject:
-            # Tìm điểm trong cùng dòng
-            score = extract_score_from_text(full_line_text)
+            # Tìm điểm
+            score = extract_score_from_text(combined_text)
             
             if score is not None:
-                # Nếu đã có môn này rồi → giữ điểm cao hơn (trường hợp trùng)
                 if subject not in scores or score > scores[subject]:
                     scores[subject] = score
                 
                 matched_lines.append({
                     "subject": subject,
                     "score": score,
-                    "ocr_text": full_line_text,
-                    "confidence": min([item[2] for item in line_items]),
+                    "ocr_text": combined_text,
+                    "confidence": combined_conf,
                 })
+                # Đã extract xong thì reset pending
+                pending_text = ""
+                pending_conf = 1.0
             else:
-                # Tìm thấy môn nhưng không có điểm → thử tìm điểm ở dòng kế tiếp
-                unmatched_lines.append(f"[Thiếu điểm] {full_line_text}")
+                # Tìm thấy môn nhưng không có điểm -> lưu lại chờ dòng tiếp theo
+                pending_text = combined_text
+                pending_conf = combined_conf
         else:
             # Không match được môn nào
-            # Kiểm tra xem dòng này có chứa điểm không (để hỗ trợ debug)
             score_in_line = extract_score_from_text(full_line_text)
             if score_in_line is not None and len(full_line_text) > 5:
                 unmatched_lines.append(full_line_text)
+                
+            # Lưu dòng hiện tại để chờ ghép với dòng tiếp theo
+            if len(pending_text) < 100:
+                pending_text = combined_text
+                pending_conf = combined_conf
+            else:
+                pending_text = full_line_text
+                pending_conf = line_conf
     
-    # ============================================================
-    # STRATEGY 3: Fallback — Tìm pattern "tên môn ... điểm" trên toàn text
-    # ============================================================
-    # Gộp tất cả text thành 1 chuỗi dài và tìm theo pattern
-    all_text = " ".join(raw_texts)
-    
-    # Tìm tất cả các cặp (tên môn, điểm) mà Strategy 2 có thể bỏ sót
-    for keyword, standard_name in sorted(SUBJECT_KEYWORDS.items(), key=lambda x: len(x[0]), reverse=True):
-        if standard_name in scores:
-            continue  # Đã tìm được rồi
-        
-        # Tìm keyword trong toàn bộ text
-        normalized_all = normalize_text(all_text)
-        keyword_pos = normalized_all.find(keyword)
-        
-        if keyword_pos != -1:
-            # Lấy đoạn text xung quanh keyword (±50 ký tự)
-            context_start = max(0, keyword_pos)
-            context_end = min(len(normalized_all), keyword_pos + len(keyword) + 50)
-            context = normalized_all[context_start:context_end]
-            
-            score = extract_score_from_text(context)
-            if score is not None:
-                scores[standard_name] = score
-                matched_lines.append({
-                    "subject": standard_name,
-                    "score": score,
-                    "ocr_text": f"[Fallback] ...{context}...",
-                    "confidence": 0.5,  # Lower confidence for fallback
-                })
+    # Đã xoá Strategy 3 vì gây ra rất nhiều lỗi nhận diện nhầm điểm (false positives).
     
     # ============================================================
     # Warnings
@@ -466,3 +522,6 @@ def build_full_score_dict(extracted_scores: dict[str, float]) -> dict[str, float
         else:
             full_scores[subject] = -1.0
     return full_scores
+
+
+

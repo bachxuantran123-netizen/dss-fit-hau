@@ -137,6 +137,9 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # Pandas vectorization (No for loop)
     df_clean[score_cols] = df_clean[score_cols].apply(pd.to_numeric, errors='coerce').fillna(-1.0).round(1)
 
+    # Khắc phục lỗi dữ liệu cũ: thay thế 0.0 thành -1.0 (coi như chưa học)
+    df_clean[score_cols] = df_clean[score_cols].replace(0.0, -1.0)
+
     return df_clean
 
 
@@ -180,14 +183,18 @@ def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     # 1. Trích xuất ma trận điểm theo FEATURE_ORDER, điền 0.0 cho các môn thiếu
     score_matrix = df_labeled.reindex(columns=FEATURE_ORDER, fill_value=0.0).values
+    
+    # ⚠️ QUAN TRỌNG: Tạm thời chuyển -1.0 (chưa học) thành 0.0 
+    # để tính Cosine Similarity (tránh bị trừ điểm âm)
+    calc_matrix = np.where(score_matrix == -1.0, 0.0, score_matrix)
 
     # 2. Xây dựng ma trận Profile
     careers = list(CAREER_PROFILES.keys())
     profile_matrix = np.array([CAREER_PROFILES[c] for c in careers])
 
     # 3. Tính Cosine Similarity bằng NumPy broadcasting
-    dot_products = np.dot(score_matrix, profile_matrix.T)
-    student_norms = np.linalg.norm(score_matrix, axis=1)
+    dot_products = np.dot(calc_matrix, profile_matrix.T)
+    student_norms = np.linalg.norm(calc_matrix, axis=1)
     profile_norms = np.linalg.norm(profile_matrix, axis=1)
 
     # Tránh chia cho 0
