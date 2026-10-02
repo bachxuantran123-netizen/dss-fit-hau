@@ -355,23 +355,37 @@ def main() -> None:
                                     save_csv_path = os.path.join("data", "processed", f"{os.path.splitext(uploaded_file.name)[0]}.csv")
                                     
                                     import fitz
+                                    from PIL import ImageEnhance, ImageFilter
                                     try:
-                                        doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+                                        pdf_bytes = uploaded_file.read()
                                         uploaded_file.seek(0)
+                                        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                                         
-                                        pdf_text = ""
-                                        for page in doc:
-                                            pdf_text += page.get_text()
-                                            
-                                        if len(pdf_text.strip()) > 20:
-                                            # PDF chứa text
-                                            ocr_result_single = extract_scores_from_student_pdf(uploaded_file, save_csv_path=save_csv_path)
-                                        else:
-                                            # PDF chứa ảnh (scan)
-                                            ocr_result_single = {"scores": {}, "raw_text": [], "matched_lines": [], "unmatched_lines": [], "warnings": []}
+                                        # ── Bước 1: Thử trích xuất bằng pdfplumber (text-based PDF) ──
+                                        ocr_result_single = extract_scores_from_student_pdf(
+                                            io.BytesIO(pdf_bytes), save_csv_path=save_csv_path
+                                        )
+                                        
+                                        text_scores = ocr_result_single.get("scores", {})
+                                        
+                                        # ── Bước 2: Nếu pdfplumber không trích được gì,
+                                        #    fallback sang OCR từng trang ảnh ──
+                                        if not text_scores:
+                                            st.toast(f"📸 PDF '{uploaded_file.name}' là ảnh scan — đang dùng AI-OCR...")
+                                            ocr_result_single = {
+                                                "scores": {}, "raw_text": [],
+                                                "matched_lines": [], "unmatched_lines": [],
+                                                "warnings": []
+                                            }
                                             for i, page in enumerate(doc):
-                                                pix = page.get_pixmap(dpi=150)
+                                                # DPI cao hơn cho OCR tiếng Việt chính xác hơn
+                                                pix = page.get_pixmap(dpi=200)
                                                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                                                
+                                                # Tiền xử lý ảnh: Grayscale + Tăng contrast + Sharpen
+                                                img = img.convert("L").convert("RGB")  # Grayscale
+                                                img = ImageEnhance.Contrast(img).enhance(1.5)
+                                                img = img.filter(ImageFilter.SHARPEN)
                                                 
                                                 page_result = extract_scores_from_image(img)
                                                 
@@ -384,12 +398,17 @@ def main() -> None:
                                                 ocr_result_single["unmatched_lines"].extend(page_result.get("unmatched_lines", []))
                                                 
                                             if not ocr_result_single["scores"]:
-                                                ocr_result_single["warnings"].append("⚠️ Không trích xuất được điểm nào từ PDF ảnh.")
+                                                ocr_result_single["warnings"].append(
+                                                    "⚠️ Không trích xuất được điểm nào từ PDF ảnh. "
+                                                    "Vui lòng kiểm tra ảnh có rõ nét và chứa bảng điểm không."
+                                                )
                                                 
-                                            if ocr_result_single["scores"] and save_csv_path:
-                                                os.makedirs(os.path.dirname(save_csv_path), exist_ok=True)
-                                                df = pd.DataFrame(list(ocr_result_single["scores"].items()), columns=["Tên môn", "Điểm"])
-                                                df.to_csv(save_csv_path, index=False, encoding='utf-8-sig')
+                                        # Lưu CSV nếu có kết quả
+                                        final_scores = ocr_result_single.get("scores", {})
+                                        if final_scores and save_csv_path:
+                                            os.makedirs(os.path.dirname(save_csv_path), exist_ok=True)
+                                            df = pd.DataFrame(list(final_scores.items()), columns=["Tên môn", "Điểm"])
+                                            df.to_csv(save_csv_path, index=False, encoding='utf-8-sig')
                                                 
                                     except Exception as e:
                                         st.error(f"Lỗi đọc PDF: {e}")
@@ -436,6 +455,11 @@ def main() -> None:
                                 "num_images": len(uploaded_files),
                             }
                             
+                            # Clear stale widget states so checkboxes reflect new OCR results accurately
+                            for key in list(st.session_state.keys()):
+                                if key.startswith("ocr_check_") or key.startswith("ocr_input_"):
+                                    del st.session_state[key]
+
                             st.session_state.ocr_result = merged_result
                             st.session_state.ocr_scores = merged_scores.copy()
                             st.session_state.step = 2.5
@@ -460,6 +484,9 @@ def main() -> None:
             with col_manual:
                 if st.button("⌨️ Nhập điểm thủ công (không cần ảnh)", use_container_width=True):
                     # Bỏ qua OCR, vào thẳng form nhập điểm với điểm trống
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("ocr_check_") or key.startswith("ocr_input_"):
+                            del st.session_state[key]
                     st.session_state.ocr_result = {}
                     st.session_state.ocr_scores = {}
                     st.session_state.step = 2.5
@@ -562,6 +589,9 @@ def main() -> None:
             with col_reupload:
                 if st.button("📸 Upload ảnh khác", use_container_width=True):
                     # Reset OCR state
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("ocr_check_") or key.startswith("ocr_input_"):
+                            del st.session_state[key]
                     if 'ocr_result' in st.session_state:
                         del st.session_state.ocr_result
                     if 'ocr_scores' in st.session_state:

@@ -245,9 +245,17 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
         with pdfplumber.open(pdf_file_or_bytes) as pdf:
             for page in pdf.pages:
                 tables = page.extract_tables()
-                # Fallback nếu PDF không có viền bảng (grid lines)
+                # Fallback 1: nếu PDF không có viền bảng (grid lines)
                 if not tables:
                     tables = page.extract_tables({"vertical_strategy": "text", "horizontal_strategy": "text"})
+                # Fallback 2: thử với tolerance cao hơn
+                if not tables:
+                    tables = page.extract_tables({
+                        "vertical_strategy": "text",
+                        "horizontal_strategy": "text",
+                        "snap_tolerance": 5,
+                        "join_tolerance": 5,
+                    })
                     
                 for table in tables:
                     for row in table:
@@ -255,6 +263,18 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                             cleaned_row = [str(cell).strip().replace('\n', ' ') if cell else "" for cell in row]
                             all_rows.append(cleaned_row)
                             raw_texts.append(" | ".join(cleaned_row))
+                
+                # Fallback 3: Nếu vẫn không tìm được bảng, trích xuất text thuần
+                # và tách thành các dòng riêng biệt
+                if not tables:
+                    page_text = page.extract_text()
+                    if page_text:
+                        for line in page_text.split('\n'):
+                            line = line.strip()
+                            if line:
+                                cleaned_row = [line]
+                                all_rows.append(cleaned_row)
+                                raw_texts.append(line)
                             
         # Xuất file CSV theo yêu cầu
         if save_csv_path and all_rows:
@@ -299,6 +319,81 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                     if match_subject_ocr(normalize_text(cell_val)):
                         subject_col_idx = i
                         break
+                        
+            # Xử lý đặc biệt cho dòng text thuần (1 cột duy nhất, từ fallback 3)
+            # Quét toàn bộ dòng để tìm cả tên môn lẫn điểm
+            if len(row) == 1 and subject_col_idx == -1:
+                full_line = str(row[0]).strip()
+                norm_line = normalize_text(full_line)
+                matched = match_subject_ocr(norm_line)
+                if matched:
+                    # Tìm điểm trong dòng
+                    score_match = SCORE_PATTERN.search(full_line)
+                    if score_match:
+                        score_str = score_match.group(1).replace(',', '.')
+                        try:
+                            score_val = float(score_str)
+                            if 0.0 <= score_val <= 10.0:
+                                scores[matched] = max(scores.get(matched, 0.0), score_val)
+                                matched_lines.append({
+                                    "subject": matched,
+                                    "score": score_val,
+                                    "ocr_text": full_line,
+                                    "confidence": 1.0
+                                })
+                                continue
+                        except:
+                            pass
+                    # Match môn nhưng chưa có điểm → pending
+                    pending_subj = full_line
+                    pending_score = ""
+                    pending_raw = full_line
+                    continue
+                elif pending_subj:
+                    # Dòng không match môn nhưng có pending → thử nối
+                    combined = (pending_subj + " " + full_line).strip()
+                    matched_combined = match_subject_ocr(normalize_text(combined))
+                    score_match = SCORE_PATTERN.search(full_line)
+                    if matched_combined and score_match:
+                        score_str = score_match.group(1).replace(',', '.')
+                        try:
+                            score_val = float(score_str)
+                            if 0.0 <= score_val <= 10.0:
+                                scores[matched_combined] = max(scores.get(matched_combined, 0.0), score_val)
+                                matched_lines.append({
+                                    "subject": matched_combined,
+                                    "score": score_val,
+                                    "ocr_text": combined,
+                                    "confidence": 1.0
+                                })
+                                pending_subj = ""
+                                pending_score = ""
+                                pending_raw = ""
+                                continue
+                        except:
+                            pass
+                    # Dòng chứa điểm cho pending subject?
+                    if not matched_combined and pending_subj:
+                        pend_matched = match_subject_ocr(normalize_text(pending_subj))
+                        if pend_matched and score_match:
+                            score_str = score_match.group(1).replace(',', '.')
+                            try:
+                                score_val = float(score_str)
+                                if 0.0 <= score_val <= 10.0:
+                                    scores[pend_matched] = max(scores.get(pend_matched, 0.0), score_val)
+                                    matched_lines.append({
+                                        "subject": pend_matched,
+                                        "score": score_val,
+                                        "ocr_text": pending_raw + " | " + full_line,
+                                        "confidence": 1.0
+                                    })
+                                    pending_subj = ""
+                                    pending_score = ""
+                                    pending_raw = ""
+                                    continue
+                            except:
+                                pass
+                continue
                         
             # Nếu đã xác định được cột Tên môn học
             if subject_col_idx != -1 and subject_col_idx < len(row):

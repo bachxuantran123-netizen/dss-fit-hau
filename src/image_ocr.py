@@ -319,166 +319,251 @@ def match_subject(text: str) -> str | None:
 
 
 def extract_score_from_text(text: str) -> float | None:
-    """Trích xuất điểm số (0.0 - 10.0) từ chuỗi OCR text.
+    """Trích xuất điểm TBCHP (Trung bình chung học phần) từ chuỗi text.
     
-    Hỗ trợ cả dấu chấm (7.5), dấu phẩy (7,5) và số nguyên (9, 10).
-    Sẽ lấy con số hợp lệ (0-10) xuất hiện *cuối cùng* trong chuỗi, 
-    vì điểm tổng kết thường nằm ở cuối dòng.
+    Phân tích cấu trúc bảng điểm HAU:
+    <Mã HP> <Tên môn> <Số TC> <Lần học> QT : <QT> <Thi> <TBCHP> <Hệ 4> <Chữ>
+    
+    Quy tắc an toàn:
+    - Nếu dòng không có điểm (môn chưa học, chỉ có Số TC và Lần học) -> trả về None
+    - Tuyệt đối không lấy nhầm cột Số TC, Lần học, hay Điểm thi làm TBCHP.
     """
-    matches = SCORE_PATTERN.findall(text)
+    score_pattern = re.compile(r'(?<![\d.,])(\d{1,2}(?:[.,]\d)?)(?![\d.,])')
     
+    # 1. Tìm theo neo "QT" (Điểm quá trình)
+    qt_pattern = re.compile(r'(?:Q\s*T|0\s*T|O\s*T|Q\s*7|Q\s*I)\s*[:;.\-]?\s*', re.IGNORECASE)
+    qt_matches = list(qt_pattern.finditer(text))
+    
+    if qt_matches:
+        last_qt = qt_matches[-1]
+        after_qt = text[last_qt.end():]
+        after_scores = []
+        for m in score_pattern.findall(after_qt):
+            try:
+                sc = float(m.replace(',', '.'))
+                if 0.0 <= sc <= 10.0:
+                    after_scores.append(sc)
+            except ValueError:
+                continue
+                
+        # Sau QT thứ tự là: QT (nếu nằm sau chữ QT), Thi, TBCHP, Hệ 4
+        # Thường có 3 số trở lên: [QT, Thi, TBCHP, ...]
+        if len(after_scores) >= 3:
+            return after_scores[2]  # Điểm TBCHP là số thứ 3
+        elif len(after_scores) == 2:
+            # Nếu chỉ có 2 số sau QT, thường là [Thi, TBCHP] hoặc [QT, TBCHP]
+            return after_scores[1]
+        elif len(after_scores) == 1:
+            # Chỉ có 1 số sau QT -> Đây là điểm QT, CHƯA CÓ ĐIỂM THI VÀ TBCHP!
+            return None
+            
+    # 2. Nếu KHÔNG có từ khoá QT (hoặc neo điểm)
+    # Kiểm tra xem có từ khoá điểm khác không: "tbchp", "tbcmh", "tổng kết", "điểm"
+    has_score_keyword = bool(re.search(r'\b(?:tbchp|tbcmh|tổng kết|điểm|thi)\b', text, re.IGNORECASE))
+    
+    matches = score_pattern.findall(text)
     valid_scores = []
+    has_decimal = False
     for match in matches:
         try:
+            if '.' in match or ',' in match:
+                has_decimal = True
             score = float(match.replace(',', '.'))
             if 0.0 <= score <= 10.0:
                 valid_scores.append(score)
         except ValueError:
             continue
             
-    # Lấy điểm hợp lệ xuất hiện cuối cùng trong dòng
-    if valid_scores:
-        return valid_scores[-1]
-    
+    if not valid_scores:
+        return None
+        
+    # CHỐNG FALSE POSITIVE CHO MÔN CHƯA HỌC:
+    # Nếu không có từ khoá điểm và không có số thập phân:
+    # Ví dụ dòng chỉ có: "GIS và quản lý đô thị 3 1" -> valid_scores = [3.0, 1.0]
+    # Đây là [Số TC, Lần học], HOÀN TOÀN KHÔNG PHẢI ĐIỂM SỐ!
+    if not has_score_keyword:
+        if len(valid_scores) <= 2 and not has_decimal and all(s <= 4.0 for s in valid_scores):
+            return None
+        if len(valid_scores) < 3 and not has_decimal:
+            return None
+            
+    if len(valid_scores) >= 3:
+        # Nếu có từ 3 số trở lên, số áp chót thường là TBCHP (hoặc số thứ 3 từ dưới lên nếu có điểm chữ OCR nhầm)
+        last = valid_scores[-1]
+        second_last = valid_scores[-2]
+        third_last = valid_scores[-3]
+        if last <= 4.0:
+            return second_last  # second_last là TBCHP, last là Hệ 4
+        elif second_last <= 4.0 and last > 4.0:
+            return third_last
+        return second_last
+        
     return None
 
 
 def extract_scores_from_image(image_data) -> dict:
-    """Trích xuất điểm số 24 môn học từ ảnh bảng điểm.
+    """Trích xuất điểm số 24 môn học từ ảnh bảng điểm (hỗ trợ ảnh portal, scan PDF, giấy).
     
-    Args:
-        image_data: PIL Image, numpy array, hoặc đường dẫn file ảnh.
-        
-    Returns:
-        dict với keys:
-            - 'scores': dict[str, float] — Điểm trích xuất được (tên môn chuẩn -> điểm)
-            - 'raw_text': list[str] — Toàn bộ text OCR đọc được (để debug)
-            - 'matched_lines': list[dict] — Chi tiết các dòng đã match thành công
-            - 'unmatched_lines': list[str] — Các dòng không match được môn nào
-            - 'warnings': list[str] — Cảnh báo (nếu có)
+    Ưu tiên tuyệt đối:
+    1. Lấy chính xác cột điểm TBCHP (sử dụng toạ độ không gian cột TBCHP trong bảng).
+    2. Chống nhận diện nhầm các môn chưa có điểm (trả về None / không đưa vào danh sách có điểm).
     """
     reader = get_reader()
     
-    # Chuyển PIL Image sang numpy array nếu cần
-    if isinstance(image_data, Image.Image):
-        image_data = np.array(image_data)
+    # Chuẩn hoá sang PIL Image để tiền xử lý
+    if isinstance(image_data, str):
+        pil_img = Image.open(image_data)
+    elif isinstance(image_data, np.ndarray):
+        pil_img = Image.fromarray(image_data)
+    elif isinstance(image_data, Image.Image):
+        pil_img = image_data
+    else:
+        pil_img = Image.open(image_data)
+        
+    if pil_img.mode != 'RGB':
+        pil_img = pil_img.convert('RGB')
+        
+    w_orig, h_orig = pil_img.size
     
-    # OCR
-    results = reader.readtext(image_data, detail=1, paragraph=False)
+    # ── Bước 1: Upscale bằng Lanczos để EasyOCR nhận diện rõ từng ô số nhỏ và số đơn lẻ ──
+    scale = 2.0 if w_orig < 1400 else 1.5
+    new_w, new_h = int(w_orig * scale), int(h_orig * scale)
+    img_scaled = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    from PIL import ImageEnhance
+    img_scaled = ImageEnhance.Contrast(img_scaled).enhance(1.25)
     
-    # Kết quả
+    # ── Bước 2: OCR với tham số tối ưu cho bảng điểm ──
+    results = reader.readtext(
+        np.array(img_scaled),
+        detail=1,
+        paragraph=False,
+        text_threshold=0.3,
+        low_text=0.2,
+        link_threshold=0.25,
+        mag_ratio=1.5
+    )
+    
     scores: dict[str, float] = {}
     raw_texts: list[str] = []
     matched_lines: list[dict] = []
     unmatched_lines: list[str] = []
     warnings: list[str] = []
     
-    # ============================================================
-    # STRATEGY 1: Group theo dòng (Y-coordinate gần nhau)
-    # ============================================================
-    # Sắp xếp theo Y-coordinate (top-to-bottom)
-    sorted_results = sorted(results, key=lambda r: r[0][0][1])  # sort by top-left Y
-    
-    # Group các text box cùng dòng (Y-diff < 20px)
-    lines: list[list] = []
-    current_line: list = []
-    current_y: float = -100
-    
-    for bbox, text, conf in sorted_results:
+    # Chuẩn hoá danh sách items có toạ độ tương đối x_rel, y_rel
+    items = []
+    for bbox, text, conf in results:
         raw_texts.append(text)
-        top_y = bbox[0][1]  # top-left Y
+        xs = [p[0] for p in bbox]
+        ys = [p[1] for p in bbox]
+        items.append({
+            "text": text.strip(),
+            "conf": conf,
+            "x_min": min(xs),
+            "x_max": max(xs),
+            "x_mid": (min(xs) + max(xs)) / 2,
+            "y_min": min(ys),
+            "y_max": max(ys),
+            "y_mid": (min(ys) + max(ys)) / 2,
+            "x_rel": ((min(xs) + max(xs)) / 2) / new_w,
+            "y_rel": ((min(ys) + max(ys)) / 2) / new_h,
+        })
         
-        if abs(top_y - current_y) > 20:
-            # Dòng mới
-            if current_line:
-                lines.append(current_line)
-            current_line = [(bbox, text, conf)]
-            current_y = top_y
-        else:
-            current_line.append((bbox, text, conf))
-    
-    if current_line:
-        lines.append(current_line)
-    
-    # ============================================================
-    # STRATEGY 2: Duyệt từng dòng, tìm tên môn + điểm
-    # ============================================================
-    pending_text = ""
-    pending_conf = 1.0
-    
-    for line_items in lines:
-        # Sắp xếp items trong dòng theo X (left-to-right)
-        line_items.sort(key=lambda item: item[0][0][0])
-        
-        # Gộp text của dòng
-        full_line_text = " ".join([item[1] for item in line_items])
-        line_conf = min([item[2] for item in line_items]) if line_items else 1.0
-        
-        # Nối với text chờ trước đó (nếu có)
-        combined_text = (pending_text + " " + full_line_text).strip()
-        combined_conf = min(pending_conf, line_conf)
-        
-        # Thử xem dòng mới có chứa một môn học HOÀN TOÀN KHÁC không
-        # Nếu có, ta không nên nối vào pending_text cũ vì đã sang môn mới
-        new_line_subject = match_subject(full_line_text)
-        
-        # Thử match trên chuỗi đã nối
-        subject = match_subject(combined_text)
-        
-        # Nếu dòng mới là một môn khác, và chuỗi nối vẫn match môn cũ,
-        # có nghĩa là ta đã ghép nhầm 2 môn với nhau.
-        if new_line_subject and pending_text:
-            pending_subj = match_subject(pending_text)
-            if pending_subj and new_line_subject != pending_subj:
-                # Đã sang môn mới! Reset chuỗi nối
-                combined_text = full_line_text
-                combined_conf = line_conf
-                subject = new_line_subject
-        
-        if not subject:
-            # Nếu chuỗi nối không match, thử match riêng lẻ (trường hợp chuỗi pending là rác)
-            subject = new_line_subject
-            if subject:
-                combined_text = full_line_text
-                combined_conf = line_conf
-                
-        if subject:
-            # Tìm điểm
-            score = extract_score_from_text(combined_text)
+    # ── Bước 3: Gom nhóm theo dòng theo toạ độ Y-mid ──
+    items.sort(key=lambda it: it["y_mid"])
+    y_thresh = 18 * scale
+    rows = []
+    for it in items:
+        placed = False
+        for r in rows:
+            r_y_mid = sum(x["y_mid"] for x in r) / len(r)
+            if abs(it["y_mid"] - r_y_mid) <= y_thresh:
+                r.append(it)
+                placed = True
+                break
+        if not placed:
+            rows.append([it])
             
-            if score is not None:
-                if subject not in scores or score > scores[subject]:
-                    scores[subject] = score
+    score_regex = re.compile(r'(?<![\d.,])(\d{1,2}(?:[.,]\d)?)(?![\d.,])')
+    
+    # ── Bước 4: Duyệt từng dòng, ghép dòng nối tiếp và trích xuất điểm TBCHP ──
+    pending_row_items = []
+    
+    for r in rows:
+        r.sort(key=lambda it: it["x_min"])
+        full_line_text = " ".join([it['text'] for it in r])
+        
+        # Thử xem dòng hiện tại có chứa môn học không
+        direct_subject = match_subject(full_line_text)
+        
+        if direct_subject:
+            combined_items = r
+            subject = direct_subject
+            pending_row_items = []
+        else:
+            # Thử ghép với dòng chờ phía trước (xử lý tên môn bị ngắt dòng)
+            combined_items = pending_row_items + r
+            combined_text = " ".join([it['text'] for it in combined_items])
+            subject = match_subject(combined_text)
+            
+        if subject:
+            # ĐÃ MATCH ĐƯỢC MÔN HỌC!
+            extracted_score = None
+            
+            # --- Chiến lược A: Dựa vào cột toạ độ không gian chuẩn của bảng portal HAU ---
+            # Trong bảng điểm portal HAU:
+            # x_rel < 0.45: STT, Mã HP, Tên môn, Số TC, Lần học
+            # x_rel in [0.46, 0.54]: QT (Quá trình)
+            # x_rel in [0.54, 0.59]: Thi
+            # x_rel in [0.58, 0.67]: CỘT ĐIỂM TBCHP CHUẨN!
+            # x_rel in [0.67, 0.74]: Điểm hệ 4
+            # x_rel >= 0.74: Điểm chữ (A, B, C...)
+            tbchp_candidates = []
+            for it in combined_items:
+                if 0.58 <= it["x_rel"] <= 0.67:
+                    for m in score_regex.findall(it["text"]):
+                        try:
+                            val = float(m.replace(',', '.'))
+                            if 0.0 <= val <= 10.0:
+                                tbchp_candidates.append(val)
+                        except ValueError:
+                            pass
+                            
+            if tbchp_candidates:
+                extracted_score = tbchp_candidates[0]
+            else:
+                # --- Chiến lược B: Fallback dựa vào từ khoá QT và vị trí số ---
+                has_qt = any(re.search(r'(?:Q\s*T|0\s*T|O\s*T|Q\s*7|Q\s*I)', it["text"], re.IGNORECASE) for it in combined_items)
+                score_items = [it for it in combined_items if it["x_rel"] >= 0.48]
                 
+                # BẢO VỆ CHỐNG TÍCH NHẦM: Nếu không có QT và không có ô nào ở vùng điểm, môn này CHƯA CÓ ĐIỂM!
+                if not has_qt and not score_items:
+                    extracted_score = None
+                else:
+                    row_full_text = " ".join([it['text'] for it in combined_items])
+                    extracted_score = extract_score_from_text(row_full_text)
+                    
+            if extracted_score is not None:
+                if subject not in scores or extracted_score > scores[subject]:
+                    scores[subject] = extracted_score
+                    
                 matched_lines.append({
                     "subject": subject,
-                    "score": score,
-                    "ocr_text": combined_text,
-                    "confidence": combined_conf,
+                    "score": extracted_score,
+                    "ocr_text": " ".join([it['text'] for it in combined_items]),
+                    "confidence": min([it['conf'] for it in combined_items]) if combined_items else 1.0,
                 })
-                # Đã extract xong thì reset pending
-                pending_text = ""
-                pending_conf = 1.0
+                pending_row_items = []
             else:
-                # Tìm thấy môn nhưng không có điểm -> lưu lại chờ dòng tiếp theo
-                pending_text = combined_text
-                pending_conf = combined_conf
+                # Môn này không có điểm (chưa học) -> Reset pending để không dính sang dòng sau
+                pending_row_items = []
         else:
-            # Không match được môn nào
-            score_in_line = extract_score_from_text(full_line_text)
-            if score_in_line is not None and len(full_line_text) > 5:
-                unmatched_lines.append(full_line_text)
-                
-            # Lưu dòng hiện tại để chờ ghép với dòng tiếp theo
-            if len(pending_text) < 100:
-                pending_text = combined_text
-                pending_conf = combined_conf
+            # Dòng không match được môn nào -> lưu lại chờ ghép nếu dòng ngắn (< 50 ký tự)
+            if len(full_line_text) < 50:
+                pending_row_items = r
             else:
-                pending_text = full_line_text
-                pending_conf = line_conf
-    
-    # Đã xoá Strategy 3 vì gây ra rất nhiều lỗi nhận diện nhầm điểm (false positives).
-    
+                unmatched_lines.append(full_line_text)
+                pending_row_items = []
+                
     # ============================================================
     # Warnings
     # ============================================================
