@@ -342,7 +342,7 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                     "confidence": 1.0
                                 })
                                 continue
-                        except:
+                        except (ValueError, TypeError):
                             pass
                     # Match môn nhưng chưa có điểm → pending
                     pending_subj = full_line
@@ -370,7 +370,7 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                 pending_score = ""
                                 pending_raw = ""
                                 continue
-                        except:
+                        except (ValueError, TypeError):
                             pass
                     # Dòng chứa điểm cho pending subject?
                     if not matched_combined and pending_subj:
@@ -391,7 +391,7 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                     pending_score = ""
                                     pending_raw = ""
                                     continue
-                            except:
+                            except (ValueError, TypeError):
                                 pass
                 continue
                         
@@ -439,7 +439,7 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                 pending_subj = ""
                                 pending_score = ""
                                 pending_raw = ""
-                        except:
+                        except (ValueError, TypeError):
                             pass
                             
                     if not found_score:

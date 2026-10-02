@@ -18,7 +18,8 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import joblib
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
+import fitz  # PyMuPDF — PDF page rendering
 
 # Local OCR module
 from image_ocr import extract_scores_from_image, build_full_score_dict, STANDARD_SUBJECTS
@@ -176,7 +177,7 @@ def generate_excel_report(user_name: str, student_data: dict, top1_prediction: s
 # ============================================================
 # SYSTEM EVALUATION (FEEDBACK LOOP)
 # ============================================================
-def display_system_metrics():
+def display_system_metrics() -> None:
     """Hiển thị điểm đánh giá trung bình trên Sidebar."""
     if os.path.exists(FEEDBACK_PATH):
         try:
@@ -189,10 +190,10 @@ def display_system_metrics():
                     value=f"{avg_rating:.1f} ⭐", 
                     delta=f"{total} lượt đánh giá"
                 )
-        except Exception:
+        except Exception:  # Non-critical sidebar display — fail silently to not break the main app
             pass
 
-def save_feedback(name: str, suggested_career: str, rating: int, comment: str):
+def save_feedback(name: str, suggested_career: str, rating: int, comment: str) -> None:
     """Lưu đánh giá của người dùng vào file CSV."""
     os.makedirs(os.path.dirname(FEEDBACK_PATH), exist_ok=True)
     file_exists = os.path.exists(FEEDBACK_PATH)
@@ -354,8 +355,6 @@ def main() -> None:
                                     # Xử lý PDF
                                     save_csv_path = os.path.join("data", "processed", f"{os.path.splitext(uploaded_file.name)[0]}.csv")
                                     
-                                    import fitz
-                                    from PIL import ImageEnhance, ImageFilter
                                     try:
                                         pdf_bytes = uploaded_file.read()
                                         uploaded_file.seek(0)
@@ -441,7 +440,7 @@ def main() -> None:
                                 )
                             elif len(merged_scores) < 5:
                                 all_warnings.append(
-                                    f"⚠️ Chỉ trích xuất được {len(merged_scores)}/24 môn từ {len(uploaded_files)} ảnh. "
+                                    f"⚠️ Chỉ trích xuất được {len(merged_scores)}/{len(STANDARD_SUBJECTS)} môn từ {len(uploaded_files)} ảnh. "
                                     "Kết quả có thể không chính xác."
                                 )
                             

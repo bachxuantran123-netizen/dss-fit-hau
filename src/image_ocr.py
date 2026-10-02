@@ -229,6 +229,10 @@ def match_subject(text: str) -> str | None:
 _NUM_RE = re.compile(r"\d+(?:[.,]\d+)?")
 _QT_RE = re.compile(r"[QO0]T\s*[:;.]?\s*\d+(?:[.,]\d+)?", re.I)   # "QT : 7.6" = điểm quá trình, bỏ
 
+# Public regex — used by pdf_extractor.py to extract a single score from a text line.
+# Captures the LAST number that looks like a score (0.0–10.0).
+SCORE_PATTERN = re.compile(r"(\d{1,2}[.,]\d+|\d{1,2})\s*$")
+
 
 def grade4_from_10(x: float) -> int:
     """Quy đổi thang 10 -> thang 4 theo quy chế HAU."""

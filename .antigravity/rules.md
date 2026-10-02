@@ -69,7 +69,7 @@
 ## 7. Module-specific Rules
 ### Data Engineering Module
 - **Xử lý Missing Values:** Điền -1.0 cho các môn sinh viên không học.
-- **Feature Mapping:** Sử dụng `pdf_extractor.py` để lấy tên tiếng Việt chuẩn của môn học. Gán nhãn qua `SKILL_MATRIX` (5 cụm nghề nghiệp).
+- **Feature Mapping:** Sử dụng `pdf_extractor.py` để lấy tên tiếng Việt chuẩn của môn học. Gán nhãn qua `CAREER_PROFILES` (5 Career Profile Vectors — Cosine Similarity).
 - **Visualization:** Horizontal Bar Chart (Plotly) trực quan hóa điểm 24 môn.
 - **Caching:** Bắt buộc dùng `@st.cache_resource` khi load model để tránh tràn RAM server.
 - **Export:** Sử dụng `io.BytesIO()` để tạo file Excel ảo trên RAM trước khi gọi nút Download, không lưu file Excel vật lý ra ổ cứng.

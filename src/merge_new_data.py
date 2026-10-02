@@ -95,35 +95,45 @@ def merge_data() -> pd.DataFrame:
         if col not in df_new.columns:
             df_new[col] = -1.0
 
-    # Step 4: Merge — update existing students or append new ones
+    # Step 4: Merge — update existing students or append new ones (vectorized, no iterrows)
     print("\n[4/4] Merging data...")
 
-    existing_ids = set(df_existing["Ma_SV"].astype(str))
-    updated_count = 0
-    appended_count = 0
+    df_existing["Ma_SV"] = df_existing["Ma_SV"].astype(str)
+    df_new["Ma_SV"] = df_new["Ma_SV"].astype(str)
 
-    for _, row in df_new.iterrows():
-        ma_sv = str(row["Ma_SV"])
-        if ma_sv in existing_ids:
-            # Update: fill in the 4 new subject scores for existing students
-            idx = df_existing[df_existing["Ma_SV"].astype(str) == ma_sv].index
-            for subj in new_subjects:
-                if subj in row.index and pd.notna(row[subj]):
-                    df_existing.loc[idx, subj] = row[subj]
-            updated_count += 1
-        else:
-            # Append new student row
-            meta_cols_set = {"Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"}
-            new_row = {}
-            for col in df_existing.columns:
-                if col in row.index:
-                    new_row[col] = row[col]
-                elif col in meta_cols_set:
-                    new_row[col] = ""  # Metadata → chuỗi rỗng
-                else:
-                    new_row[col] = -1.0  # Score → chưa học
-            df_existing = pd.concat([df_existing, pd.DataFrame([new_row])], ignore_index=True)
-            appended_count += 1
+    existing_ids = set(df_existing["Ma_SV"])
+
+    # ── Part A: Update new subject scores for existing students ──
+    update_cols = [s for s in new_subjects if s in df_new.columns]
+    df_update = (
+        df_new[df_new["Ma_SV"].isin(existing_ids)][["Ma_SV"] + update_cols]
+        .set_index("Ma_SV")
+    )
+    updated_count = len(df_update)
+
+    if not df_update.empty:
+        df_existing = df_existing.set_index("Ma_SV")
+        for subj in update_cols:
+            valid_mask = df_update[subj].notna()
+            df_existing.loc[df_update.index[valid_mask], subj] = (
+                df_update.loc[valid_mask, subj].values
+            )
+        df_existing = df_existing.reset_index()
+
+    # ── Part B: Append brand-new students ──
+    new_mask = ~df_new["Ma_SV"].isin(existing_ids)
+    df_new_students = df_new[new_mask].copy()
+    appended_count = len(df_new_students)
+
+    if appended_count > 0:
+        meta_cols_set = {"Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"}
+        for col in df_existing.columns:
+            if col not in df_new_students.columns:
+                df_new_students[col] = "" if col in meta_cols_set else -1.0
+        df_existing = pd.concat(
+            [df_existing, df_new_students[df_existing.columns]],
+            ignore_index=True
+        )
 
     print(f"      ✅ Updated existing students: {updated_count}")
     print(f"      ✅ Appended new students: {appended_count}")
