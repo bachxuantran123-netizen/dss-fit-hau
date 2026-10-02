@@ -1,25 +1,32 @@
 """
-image_ocr.py — Trích xuất điểm sinh viên từ ảnh bảng điểm
-===========================================================
-Module sử dụng EasyOCR để đọc ảnh bảng điểm sinh viên FIT-HAU,
-trích xuất tên môn học và điểm số, rồi map sang danh sách 24 môn
-chuẩn của hệ thống.
+image_ocr.py (v2) — Trích xuất điểm sinh viên từ ảnh / PDF bảng điểm
+====================================================================
+Dành cho bảng điểm của Cổng thông tin sinh viên FIT-HAU (tinchi.hau.edu.vn),
+đồng thời vẫn có chế độ dự phòng cho ảnh chụp bảng điểm giấy.
 
-Hỗ trợ:
-    - Ảnh chụp bảng điểm giấy (điện thoại)
-    - Ảnh chụp màn hình portal/website trường
-    - Screenshot file PDF bảng điểm
+Thuật toán chính (khác bản cũ):
+    1. OCR -> danh sách ô chữ kèm toạ độ.
+    2. Tìm các ô "Ký hiệu" (mã học phần, vd TH4302) làm NEO của từng hàng.
+    3. Gán mọi ô chữ còn lại vào hàng có neo gần nhất theo trục Y
+       (nên tên môn xuống dòng nhiều tầng không làm vỡ hàng).
+    4. Mã học phần -> môn chuẩn (tra bảng mã, chính xác tuyệt đối).
+       Chỉ khi mã lạ mới dò theo tên môn.
+    5. Điểm lấy là TBCHP (hệ 10): cặp số [TBCHP, điểm hệ 4] ở cuối hàng,
+       tự kiểm tra chéo bằng thang quy đổi 10 -> 4.
+    6. Bỏ qua toàn bộ bảng "Danh sách học phần chưa học hoặc chưa có điểm".
 """
 
+from __future__ import annotations
+
+import difflib
 import re
 import unicodedata
+
 import numpy as np
 from PIL import Image
-import easyocr
-import os
 
 # ============================================================
-# CONSTANTS — 24 MÔN HỌC CHUẨN (khớp với data_pipeline.py)
+# 24 MÔN CHUẨN (khớp với data_pipeline.py)
 # ============================================================
 STANDARD_SUBJECTS: list[str] = [
     "AN NINH MẠNG",
@@ -47,566 +54,647 @@ STANDARD_SUBJECTS: list[str] = [
     "XỬ LÝ TÍN HIỆU SỐ",
     "XỬ LÝ ẢNH",
 ]
+_STANDARD_SET = set(STANDARD_SUBJECTS)
 
 # ============================================================
-# SUBJECT KEYWORD MAPPING — Fuzzy matching từ OCR text
+# MÃ HỌC PHẦN -> MÔN CHUẨN (chỉ gồm đúng 24 môn)
 # ============================================================
-# Mapping từ keyword (lowercase, có thể bị OCR sai 1-2 ký tự)
-# sang tên chuẩn. Dùng longest-match-first strategy.
-SUBJECT_KEYWORDS: dict[str, str] = {
-    # --- AN NINH MẠNG ---
+# Bản cũ thiếu TH4302 (Toán rời rạc) và TH5209 (Xử lý ảnh) nên mất 2 môn,
+# đồng thời map ra cả môn ngoài danh sách (TH5302, TH4318, ...).
+SUBJECT_CODES: dict[str, str] = {
+    "TH5219": "AN NINH MẠNG",
+    "TH5210": "AN TOÀN VÀ BẢO MẬT HTTT",
+    "TH4315": "C#",
+    "TH4306": "CÔNG NGHỆ PHẦN MỀM",
+    "TH5217": "CƠ SỞ DỮ LIỆU",
+    "TH4303": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
+    "DT1926": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",   # DT1926.1
+    "TH5221": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
+    "TH5203": "HỆ ĐIỀU HÀNH",
+    "TH5211": "HỆ ĐIỀU HÀNH LINUX",
+    "TH4316": "JAVA",
+    "TH4319": "KIẾN TRÚC MÁY TÍNH",
+    "TH4304": "KỸ THUẬT LẬP TRÌNH",
+    "TH5231": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
+    "TH4305": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
+    "TH4309": "LẬP TRÌNH WEB",                     # "Công nghệ Web"
+    "TH5206": "MẠNG MÁY TÍNH",
+    "TH5201": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
+    "TH5208": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
+    "TH5218": "QUẢN TRỊ MẠNG MÁY TÍNH",
+    "TH4302": "TOÁN RỜI RẠC",
+    "TH4320": "TRÍ TUỆ NHÂN TẠO",
+    "TH5205": "XỬ LÝ TÍN HIỆU SỐ",
+    "TH5209": "XỬ LÝ ẢNH",
+}
+assert set(SUBJECT_CODES.values()) == _STANDARD_SET, "SUBJECT_CODES phải phủ đúng 24 môn"
+
+# ============================================================
+# TÊN MÔN -> MÔN CHUẨN (dùng khi mã bị OCR sai / ảnh không có cột mã)
+# ============================================================
+_ALIASES_RAW: dict[str, str] = {
+    # An ninh mạng
     "an ninh mạng": "AN NINH MẠNG",
-    "an ninh mang": "AN NINH MẠNG",
-    "ninh mạng": "AN NINH MẠNG",
-    "ninh mang": "AN NINH MẠNG",
-    # --- AN TOÀN VÀ BẢO MẬT HTTT ---
+    # ATBM
     "an toàn và bảo mật hệ thống thông tin": "AN TOÀN VÀ BẢO MẬT HTTT",
-    "an toàn và bảo mật": "AN TOÀN VÀ BẢO MẬT HTTT",
-    "an toan va bao mat": "AN TOÀN VÀ BẢO MẬT HTTT",
+    "an toàn và bảo mật httt": "AN TOÀN VÀ BẢO MẬT HTTT",
     "an toàn bảo mật": "AN TOÀN VÀ BẢO MẬT HTTT",
-    "bảo mật httt": "AN TOÀN VÀ BẢO MẬT HTTT",
-    "bao mat httt": "AN TOÀN VÀ BẢO MẬT HTTT",
-    "an toàn": "AN TOÀN VÀ BẢO MẬT HTTT",
-    # --- C# ---
-    "lập trình c#": "C#",
-    "lap trinh c#": "C#",
+    "an toàn và bảo mật": "AN TOÀN VÀ BẢO MẬT HTTT",
+    # C#
     "ngôn ngữ c# và công nghệ .net": "C#",
-    "ngôn ngữ c# và công nghệ net": "C#",
-    # --- CÔNG NGHỆ PHẦN MỀM ---
+    "lập trình c#": "C#",
+    "c#": "C#",
+    # CNPM
     "công nghệ phần mềm": "CÔNG NGHỆ PHẦN MỀM",
-    "cong nghệ phan mem": "CÔNG NGHỆ PHẦN MỀM",
-    "cong nghe phan mem": "CÔNG NGHỆ PHẦN MỀM",
     "cnpm": "CÔNG NGHỆ PHẦN MỀM",
-    # --- CƠ SỞ DỮ LIỆU ---
+    # CSDL
     "cơ sở dữ liệu": "CƠ SỞ DỮ LIỆU",
-    "co so du lieu": "CƠ SỞ DỮ LIỆU",
     "csdl": "CƠ SỞ DỮ LIỆU",
-    # --- CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT ---
+    # CTDL&GT
     "cấu trúc dữ liệu và giải thuật": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    "cau truc du lieu va giai thuat": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
     "cấu trúc dữ liệu": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    "cau truc du lieu": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
     "ctdl": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    "giải thuật": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    # --- GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH ---
+    # GIS
+    "gis và quản lý đô thị thông minh": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
     "gis và quản lý đô thị": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
-    "gis va quan ly do thi": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
     "gis": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
-    "đô thị thông minh": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
-    # --- HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU ---
+    # HQTCSDL
     "hệ quản trị cơ sở dữ liệu": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    "he quan tri co so du lieu": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    "trị cơ sở dữ liệu": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU", # Chống nhầm thành CSDL
-    "tri co so du lieu": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    "quản trị cơ sở": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    "quan tri co so": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
     "hệ quản trị csdl": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    "hệ quản trị": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    "he quan tri": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
+    "quản trị cơ sở dữ liệu": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
     "hqtcsdl": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    # --- HỆ ĐIỀU HÀNH LINUX ---
+    # HĐH
     "hệ điều hành linux": "HỆ ĐIỀU HÀNH LINUX",
-    "he dieu hanh linux": "HỆ ĐIỀU HÀNH LINUX",
-    "linux": "HỆ ĐIỀU HÀNH LINUX",
-    # --- HỆ ĐIỀU HÀNH ---
     "hệ điều hành": "HỆ ĐIỀU HÀNH",
-    "he dieu hanh": "HỆ ĐIỀU HÀNH",
-    "hê điêu bành": "HỆ ĐIỀU HÀNH",
-    "hê điêu banh": "HỆ ĐIỀU HÀNH",
-    # --- JAVA ---
+    # Java
     "công nghệ java": "JAVA",
     "lập trình java": "JAVA",
-    "lap trinh java": "JAVA",
     "java": "JAVA",
-    # --- KIẾN TRÚC MÁY TÍNH ---
+    # KTMT
     "kiến trúc máy tính": "KIẾN TRÚC MÁY TÍNH",
-    "kien truc may tinh": "KIẾN TRÚC MÁY TÍNH",
     "ktmt": "KIẾN TRÚC MÁY TÍNH",
-    # --- KỸ THUẬT LẬP TRÌNH ---
+    # KTLT
     "kỹ thuật lập trình": "KỸ THUẬT LẬP TRÌNH",
-    "ky thuat lap trinh": "KỸ THUẬT LẬP TRÌNH",
-    "kỷ thuật lập trình": "KỸ THUẬT LẬP TRÌNH",
-    "ky thuật lập trình": "KỸ THUẬT LẬP TRÌNH",
-    "kỹ thuat lap trinh": "KỸ THUẬT LẬP TRÌNH",
-    "kỹ thuật lạp trình": "KỸ THUẬT LẬP TRÌNH",
     "ktlt": "KỸ THUẬT LẬP TRÌNH",
-    # --- KỸ THUẬT ĐỒ HOẠ MÁY TÍNH ---
+    # Đồ hoạ
     "kỹ thuật đồ họa máy tính": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
     "kỹ thuật đồ hoạ máy tính": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "ky thuat do hoa may tinh": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "kỹ thuật đồ hoạ": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "kỹ thuật đồ họa": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "đồ hoạ máy tính": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "do hoa may tinh": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "đồ họa": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    # --- LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG ---
+    # OOP
     "lập trình hướng đối tượng": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
-    "lap trinh huong doi tuong": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
     "hướng đối tượng": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
     "oop": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
-    "lthdtg": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
-    # --- LẬP TRÌNH WEB ---
-    "lập trình web": "LẬP TRÌNH WEB",
+    "lthdt": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
+    # Web
     "công nghệ web": "LẬP TRÌNH WEB",
-    "cong nghe web": "LẬP TRÌNH WEB",
-    # --- MẠNG MÁY TÍNH ---
+    "lập trình web": "LẬP TRÌNH WEB",
+    # Mạng máy tính
     "mạng máy tính": "MẠNG MÁY TÍNH",
-    "mang may tinh": "MẠNG MÁY TÍNH",
-    # --- NHẬP MÔN CNTT VÀ TRUYỀN THÔNG ---
+    # Nhập môn
     "nhập môn cntt và truyền thông": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
-    "nhap mon cntt va truyen thong": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
     "nhập môn cntt": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
-    "nhap mon cntt": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
-    # --- PHÂN TÍCH VÀ THIẾT KẾ HTTT ---
+    # PTTKHT
     "phân tích và thiết kế hệ thống thông tin": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
     "phân tích và thiết kế httt": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-    "phan tich va thiet ke httt": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-    "phân tích thiết kế": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-    "phân tích và thiết kế": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
+    "phân tích thiết kế hệ thống": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
     "pttkhttt": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-    # --- QUẢN TRỊ MẠNG MÁY TÍNH ---
+    # QTMMT
     "quản trị mạng máy tính": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quan tri mang may tinh": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "trị mạng máy tính": "QUẢN TRỊ MẠNG MÁY TÍNH", # Dài hơn chữ "mạng máy tính" (13) để chống đè
-    "tri mang may tinh": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quản tri mạng máy tính": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quản trị mang máy tính": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quản trị mạng may tính": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quản trị mạng máy tinh": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quản trị mạng": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quan tri mang": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "quản tri mạng": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "trị mạng": "QUẢN TRỊ MẠNG MÁY TÍNH", # Fallback cực mạnh
-    "tri mang": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    # --- TOÁN RỜI RẠC ---
+    # Toán rời rạc
     "toán rời rạc": "TOÁN RỜI RẠC",
-    "toan roi rac": "TOÁN RỜI RẠC",
-    "rời rạc": "TOÁN RỜI RẠC",
-    # --- TRÍ TUỆ NHÂN TẠO ---
+    # TTNT
     "trí tuệ nhân tạo": "TRÍ TUỆ NHÂN TẠO",
-    "tri tue nhan tao": "TRÍ TUỆ NHÂN TẠO",
     "ttnt": "TRÍ TUỆ NHÂN TẠO",
-    "nhân tạo": "TRÍ TUỆ NHÂN TẠO",
-    # --- XỬ LÝ TÍN HIỆU SỐ ---
+    # XLTHS
     "xử lý tín hiệu số": "XỬ LÝ TÍN HIỆU SỐ",
-    "xu ly tin hieu so": "XỬ LÝ TÍN HIỆU SỐ",
-    "tín hiệu số": "XỬ LÝ TÍN HIỆU SỐ",
     "xlths": "XỬ LÝ TÍN HIỆU SỐ",
-    # --- XỬ LÝ ẢNH ---
+    # Xử lý ảnh
     "xử lý ảnh": "XỬ LÝ ẢNH",
-    "xu ly anh": "XỬ LÝ ẢNH",
     "kỹ thuật xử lý ảnh": "XỬ LÝ ẢNH",
-    "ky thuat xu ly anh": "XỬ LÝ ẢNH",
-    # --- SUBJECT CODES (Mã học phần) ---
-    "th5201": "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG",
-    "th4303": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    "th4304": "KỸ THUẬT LẬP TRÌNH",
-    "th5203": "HỆ ĐIỀU HÀNH",
-    "th4319": "KIẾN TRÚC MÁY TÍNH",
-    "th4305": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
-    "th5217": "CƠ SỞ DỮ LIỆU",
-    "th4306": "CÔNG NGHỆ PHẦN MỀM",
-    "th4320": "TRÍ TUỆ NHÂN TẠO",
-    "th5206": "MẠNG MÁY TÍNH",
-    "th4316": "JAVA",
-    "th5208": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-    "th5221": "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU",
-    "th5210": "AN TOÀN VÀ BẢO MẬT HTTT",
-    "th4315": "C#",
-    "th5231": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "th5211": "HỆ ĐIỀU HÀNH LINUX",
-    "th4309": "LẬP TRÌNH WEB",
-    "th4318": "PHÁT TRIỂN PHẦN MỀM",
-    "th5213": "LẬP TRÌNH MẠNG",
-    "th5216": "ĐỒ HỌA VÀ HIỆN THỰC ẢO",
-    "th5218": "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "th5219": "AN NINH MẠNG",
-    "th5205": "XỬ LÝ TÍN HIỆU SỐ",
-    "th5302": "ĐỒ ÁN TỐT NGHIỆP",
-    # --- PARTIAL KEYWORDS FALLBACK ---
-    "cấu trúc dữ liệu": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    "liệu và giải thuật": "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT",
-    "lập trình hướng đối": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
-    "hướng đối": "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG",
-    "cơ sở dữ": "CƠ SỞ DỮ LIỆU",
-    "trí tuệ nhân": "TRÍ TUỆ NHÂN TẠO",
-    "mạng máy": "MẠNG MÁY TÍNH",
-    "phân tích thiết kế": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-    "thiết kế hệ": "PHÂN TÍCH VÀ THIẾT KẾ HTTT",
-    "bảo mật hệ thống": "AN TOÀN VÀ BẢO MẬT HTTT",
-    "c# và công": "C# VÀ CÔNG NGHỆ .NET",
-    "kỹ thuật đồ": "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "hệ điều": "HỆ ĐIỀU HÀNH",
-    "xử lý tín": "XỬ LÝ TÍN HIỆU SỐ",
-    "kỹ năng": "KỸ NĂNG MỀM", # assuming TH5224 Kỹ năng QT
 }
 
-# Regex pattern: số thực (7.5, 8,3, 10.0) hoặc số nguyên (7, 8, 9, 10)
-# \b(\d{1,2}(?:[.,]\d)?)\b
-SCORE_PATTERN = re.compile(r'\b(\d{1,2}(?:[.,]\d)?)\b')
-
 
 # ============================================================
-# EasyOCR READER (singleton)
-# ============================================================
-_reader = None
-
-def get_reader():
-    """Lazy-load EasyOCR reader (tải model lần đầu, cache cho các lần sau)."""
-    global _reader
-    if _reader is None:
-        _reader = easyocr.Reader(['vi', 'en'], gpu=False)
-    return _reader
-
-
-# ============================================================
-# CORE FUNCTIONS
+# TIỆN ÍCH CHUỖI
 # ============================================================
 def remove_accents(input_str: str) -> str:
-    """Loại bỏ dấu tiếng Việt."""
-    s1 = u'ÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚÝàáâãèéêìíòóôõùúýĂăĐđĨĩŨũƠơƯưẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệỈỉỊịỌọỎỏỐốỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹ'
-    s0 = u'AAAAEEEIIOOOOUUYaaaaeeeiioooouuyAaDdIiUuOoUuAaAaAaAaAaAaAaAaAaAaAaAaEeEeEeEeEeEeEeEeIiIiOoOoOoOoOoOoOoOoOoOoOoOoUuUuUuUuUuUuUuYyYyYyYy'
-    s = ''
-    for c in input_str:
-        if c in s1:
-            s += s0[s1.index(c)]
-        else:
-            s += c
-    return s
+    """Loại bỏ dấu tiếng Việt (O(n), xử lý cả đ/Đ)."""
+    s = unicodedata.normalize("NFD", input_str)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return s.replace("đ", "d").replace("Đ", "D")
+
 
 def normalize_text(text: str) -> str:
-    """Chuẩn hoá OCR text: NFC, lowercase, bỏ ký tự thừa, gộp khoảng trắng."""
-    text = unicodedata.normalize('NFC', text)
-    text = text.lower().strip()
-    # Bỏ các ký tự đặc biệt thường gặp do OCR sai
-    text = re.sub(r'[_\-–—|/\\]', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text
+    """NFC, lowercase, bỏ ký tự phân cách do OCR, gộp khoảng trắng."""
+    text = unicodedata.normalize("NFC", text).lower().strip()
+    text = re.sub(r"[_\-–—|/\\]", " ", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def _norm_key(text: str) -> str:
+    """Khoá so khớp: không dấu, chữ thường, chỉ giữ [a-z0-9#] và khoảng trắng."""
+    s = remove_accents(unicodedata.normalize("NFC", text).lower())
+    s = re.sub(r"[^a-z0-9#]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+_ALIASES: dict[str, str] = {_norm_key(k): v for k, v in _ALIASES_RAW.items()}
+_ALIASES_SORTED: list[str] = sorted(_ALIASES, key=len, reverse=True)  # dài trước
+_FUZZY_KEYS: list[str] = [k for k in _ALIASES if len(k) >= 8]
 
 
 def match_subject(text: str) -> str | None:
-    """Match OCR text sang tên môn chuẩn bằng keyword matching.
-    
-    Strategy: longest-match-first để tránh match sai.
-    Ví dụ: "hệ điều hành linux" phải match trước "hệ điều hành".
-    Hỗ trợ đối chiếu cả dạng có dấu và không dấu (nếu có dấu trượt).
+    """Map TÊN môn (OCR) sang môn chuẩn. Trả None nếu không thuộc 24 môn.
+
+    1) khớp chính xác  2) khớp chuỗi con theo ranh giới từ, dài nhất trước
+    3) khớp mờ (difflib) để chịu lỗi OCR 1-2 ký tự.
     """
-    normalized = normalize_text(text)
-    normalized_no_accents = remove_accents(normalized)
-    
-    # Pass 0: Match Mã học phần (ưu tiên cao nhất, vì nó là định danh duy nhất)
-    # Ví dụ: "th4305", "tc2611", v.v. Các mã có dạng 2 chữ cái + 4 số
-    subject_codes = [kw for kw in SUBJECT_KEYWORDS.keys() if re.match(r'^[a-z]{2}\d{4}$', kw)]
-    for code in subject_codes:
-        if re.search(rf'\b{code}\b', normalized):
-            return SUBJECT_KEYWORDS[code]
-            
-    # Sort keywords by length (descending) for longest-match-first
-    sorted_keywords = sorted([k for k in SUBJECT_KEYWORDS.keys() if k not in subject_codes], key=len, reverse=True)
-    
-    # Pass 1: Match có dấu (chính xác hơn)
-    for keyword in sorted_keywords:
-        if keyword in normalized:
-            return SUBJECT_KEYWORDS[keyword]
-            
-    # Pass 2: Match không dấu (để chống lỗi OCR sai dấu)
-    for keyword in sorted_keywords:
-        keyword_no_accents = remove_accents(keyword)
-        if keyword_no_accents in normalized_no_accents:
-            return SUBJECT_KEYWORDS[keyword]
-    
+    n = _norm_key(text)
+    if not n:
+        return None
+    if n in _ALIASES:
+        return _ALIASES[n]
+    for alias in _ALIASES_SORTED:
+        if re.search(rf"(?<![a-z0-9#]){re.escape(alias)}(?![a-z0-9#])", n):
+            return _ALIASES[alias]
+    if len(n) >= 8:
+        close = difflib.get_close_matches(n, _FUZZY_KEYS, n=1, cutoff=0.86)
+        if close:
+            return _ALIASES[close[0]]
     return None
+
+
+# ============================================================
+# TÁCH ĐIỂM
+# ============================================================
+_NUM_RE = re.compile(r"\d+(?:[.,]\d+)?")
+_QT_RE = re.compile(r"[QO0]T\s*[:;.]?\s*\d+(?:[.,]\d+)?", re.I)   # "QT : 7.6" = điểm quá trình, bỏ
+
+
+def grade4_from_10(x: float) -> int:
+    """Quy đổi thang 10 -> thang 4 theo quy chế HAU."""
+    if x >= 8.5:
+        return 4
+    if x >= 7.0:
+        return 3
+    if x >= 5.5:
+        return 2
+    if x >= 4.0:
+        return 1
+    return 0
+
+
+def _numbers_in(text: str) -> list[float]:
+    text = _QT_RE.sub(" ", text)
+    out: list[float] = []
+    for tok in _NUM_RE.findall(text.replace(",", ".")):
+        try:
+            out.append(float(tok))
+        except ValueError:
+            pass
+    return out
+
+
+def _repair(v: float) -> float:
+    """OCR hay làm rơi dấu chấm: 83 -> 8.3, 100 -> 10."""
+    if float(v).is_integer():
+        iv = int(v)
+        if 40 <= iv <= 99:
+            return iv / 10.0
+        if iv == 100:
+            return 10.0
+    return v
+
+
+def pick_tbchp(tokens: list[float]) -> float | None:
+    """Tìm cặp [TBCHP, điểm hệ 4] RIGHTMOST trong dãy số của một hàng.
+
+    Hàng chuẩn: ... | điểm thi | TBCHP | điểm hệ 4 | (điểm chữ)
+    Cặp hợp lệ khi hệ 4 là số nguyên 0..4 và đúng bằng quy đổi của TBCHP.
+    Hàng học lại ("3 | 7.2" ... "F | B") vẫn đúng vì lấy cặp ngoài cùng bên phải.
+    """
+    for repair in (False, True):
+        seq = [_repair(t) for t in tokens] if repair else list(tokens)
+        for j in range(len(seq) - 1, 0, -1):
+            h4, t = seq[j], seq[j - 1]
+            if float(h4).is_integer() and 0 <= h4 <= 4 and 0 <= t <= 10:
+                if grade4_from_10(t) == int(h4):
+                    return float(t)
+    return None
+
+
+def _numbers_with_pos(text: str) -> list[tuple[float, float]]:
+    """Như _numbers_in nhưng kèm vị trí tương đối (0..1) của số trong chuỗi."""
+    text = _QT_RE.sub(lambda m: " " * len(m.group()), text).replace(",", ".")
+    n = max(len(text), 1)
+    out = []
+    for m in _NUM_RE.finditer(text):
+        try:
+            out.append((float(m.group()), (m.start() + m.end()) / 2 / n))
+        except ValueError:
+            pass
+    return out
+
+
+def pick_row_score(toks: list[tuple], col_x: float | None = None,
+                   tol: float | None = None, allow_column: bool = True) -> tuple[float | None, str, float | None]:
+    """Chọn TBCHP của một hàng. toks = [(giá trị, cx ước lượng, cx của ô, số lượng số trong ô)].
+
+    - Ưu tiên cặp [TBCHP, hệ 4] hợp lệ (kiểm tra chéo bằng thang 10->4).
+    - Nếu biết vị trí cột TBCHP: số được chọn phải nằm đúng cột đó (chặn việc OCR bỏ sót
+      ô TBCHP rồi vô tình ghép nhầm điểm thi + hệ 4). Ô EasyOCR gộp >= 3 số thì không
+      định vị chính xác được nên không bị loại bởi kiểm tra này.
+    - Không chắc chắn -> (None, "none", None), không đoán bừa.
+    Trả về (điểm, phương pháp, cx của ô chứa điểm).
+    """
+    def col_ok(t) -> bool:
+        if col_x is None:
+            return True
+        if t[3] >= 3:        # ô gộp nhiều số: không định vị được -> yêu cầu hàng đủ >= 5 số
+            return len(toks) >= 5   # (tín chỉ, hệ số, điểm thi, TBCHP, hệ 4); thiếu số thì từ chối
+        return min(abs(t[1] - col_x), abs(t[2] - col_x)) <= tol
+
+    for repair in (False, True):
+        seq = [((_repair(t[0]) if repair else t[0]),) + tuple(t[1:]) for t in toks]
+        for j in range(len(seq) - 1, 0, -1):
+            h4, t = seq[j][0], seq[j - 1]
+            if (float(h4).is_integer() and 0 <= h4 <= 4 and 0 <= t[0] <= 10
+                    and grade4_from_10(t[0]) == int(h4) and col_ok(t)):
+                return float(t[0]), "pair", t[2]
+
+    if col_x is not None and allow_column:      # hệ 4 bị mất nhưng vẫn đọc được đúng cột TBCHP
+        # không "sửa dấu chấm" các số chia hết cho 15 (có thể là số tiết: 45, 60, 75, 90...)
+        cand = [((_repair(t[0]) if (t[0] > 10 and t[0] % 15 != 0) else t[0]), t[2]) for t in toks
+                if col_ok(t)]
+        cand = [c for c in cand if 0 <= c[0] <= 10]
+        if cand:
+            return float(cand[-1][0]), "column", cand[-1][1]   # học lại: lấy giá trị sau cùng
+    return None, "none", None
 
 
 def extract_score_from_text(text: str) -> float | None:
-    """Trích xuất điểm TBCHP (Trung bình chung học phần) từ chuỗi text.
-    
-    Phân tích cấu trúc bảng điểm HAU:
-    <Mã HP> <Tên môn> <Số TC> <Lần học> QT : <QT> <Thi> <TBCHP> <Hệ 4> <Chữ>
-    
-    Quy tắc an toàn:
-    - Nếu dòng không có điểm (môn chưa học, chỉ có Số TC và Lần học) -> trả về None
-    - Tuyệt đối không lấy nhầm cột Số TC, Lần học, hay Điểm thi làm TBCHP.
-    """
-    score_pattern = re.compile(r'(?<![\d.,])(\d{1,2}(?:[.,]\d)?)(?![\d.,])')
-    
-    # 1. Tìm theo neo "QT" (Điểm quá trình)
-    qt_pattern = re.compile(r'(?:Q\s*T|0\s*T|O\s*T|Q\s*7|Q\s*I)\s*[:;.\-]?\s*', re.IGNORECASE)
-    qt_matches = list(qt_pattern.finditer(text))
-    
-    if qt_matches:
-        last_qt = qt_matches[-1]
-        after_qt = text[last_qt.end():]
-        after_scores = []
-        for m in score_pattern.findall(after_qt):
-            try:
-                sc = float(m.replace(',', '.'))
-                if 0.0 <= sc <= 10.0:
-                    after_scores.append(sc)
-            except ValueError:
-                continue
-                
-        # Sau QT thứ tự là: QT (nếu nằm sau chữ QT), Thi, TBCHP, Hệ 4
-        # Thường có 3 số trở lên: [QT, Thi, TBCHP, ...]
-        if len(after_scores) >= 3:
-            return after_scores[2]  # Điểm TBCHP là số thứ 3
-        elif len(after_scores) == 2:
-            # Nếu chỉ có 2 số sau QT, thường là [Thi, TBCHP] hoặc [QT, TBCHP]
-            return after_scores[1]
-        elif len(after_scores) == 1:
-            # Chỉ có 1 số sau QT -> Đây là điểm QT, CHƯA CÓ ĐIỂM THI VÀ TBCHP!
-            return None
-            
-    # 2. Nếu KHÔNG có từ khoá QT (hoặc neo điểm)
-    # Kiểm tra xem có từ khoá điểm khác không: "tbchp", "tbcmh", "tổng kết", "điểm"
-    has_score_keyword = bool(re.search(r'\b(?:tbchp|tbcmh|tổng kết|điểm|thi)\b', text, re.IGNORECASE))
-    
-    matches = score_pattern.findall(text)
-    valid_scores = []
-    has_decimal = False
-    for match in matches:
-        try:
-            if '.' in match or ',' in match:
-                has_decimal = True
-            score = float(match.replace(',', '.'))
-            if 0.0 <= score <= 10.0:
-                valid_scores.append(score)
-        except ValueError:
-            continue
-            
-    if not valid_scores:
+    """Tách điểm TBCHP từ một chuỗi (giữ tên hàm cũ để tương thích)."""
+    nums = _numbers_in(text)
+    if not nums:
         return None
-        
-    # CHỐNG FALSE POSITIVE CHO MÔN CHƯA HỌC:
-    # Nếu không có từ khoá điểm và không có số thập phân:
-    # Ví dụ dòng chỉ có: "GIS và quản lý đô thị 3 1" -> valid_scores = [3.0, 1.0]
-    # Đây là [Số TC, Lần học], HOÀN TOÀN KHÔNG PHẢI ĐIỂM SỐ!
-    if not has_score_keyword:
-        if len(valid_scores) <= 2 and not has_decimal and all(s <= 4.0 for s in valid_scores):
-            return None
-        if len(valid_scores) < 3 and not has_decimal:
-            return None
-            
-    if len(valid_scores) >= 3:
-        # Nếu có từ 3 số trở lên, số áp chót thường là TBCHP (hoặc số thứ 3 từ dưới lên nếu có điểm chữ OCR nhầm)
-        last = valid_scores[-1]
-        second_last = valid_scores[-2]
-        third_last = valid_scores[-3]
-        if last <= 4.0:
-            return second_last  # second_last là TBCHP, last là Hệ 4
-        elif second_last <= 4.0 and last > 4.0:
-            return third_last
-        return second_last
-        
-    return None
+    s = pick_tbchp(nums)
+    if s is not None:
+        return s
+    # dự phòng kiểu cũ: số cuối là hệ 4 -> lấy số liền trước
+    if len(nums) >= 2 and float(nums[-1]).is_integer() and 0 <= nums[-1] <= 4 and 0 <= nums[-2] <= 10:
+        return nums[-2]
+    return nums[-1] if 0 <= nums[-1] <= 10 else None
 
 
-def extract_scores_from_image(image_data) -> dict:
-    """Trích xuất điểm số 24 môn học từ ảnh bảng điểm (hỗ trợ ảnh portal, scan PDF, giấy).
-    
-    Ưu tiên tuyệt đối:
-    1. Lấy chính xác cột điểm TBCHP (sử dụng toạ độ không gian cột TBCHP trong bảng).
-    2. Chống nhận diện nhầm các môn chưa có điểm (trả về None / không đưa vào danh sách có điểm).
-    """
+# ============================================================
+# OCR
+# ============================================================
+_reader = None
+
+
+def get_reader():
+    """Lazy-load EasyOCR (import trong hàm để module vẫn import được khi test)."""
+    global _reader
+    if _reader is None:
+        import easyocr
+        _reader = easyocr.Reader(["vi", "en"], gpu=False)
+    return _reader
+
+
+def _prepare_image(image_data) -> np.ndarray:
+    """Nhận đường dẫn / PIL / ndarray -> ndarray RGB, phóng to nếu ảnh quá nhỏ."""
+    if isinstance(image_data, (str, bytes)) or hasattr(image_data, "__fspath__"):
+        image_data = Image.open(image_data)
+    if isinstance(image_data, np.ndarray):
+        image_data = Image.fromarray(image_data)
+    img = image_data.convert("RGB")
+    if img.width < 1400:                      # chữ nhỏ -> OCR kém
+        scale = 1600 / img.width
+        img = img.resize((1600, int(img.height * scale)), Image.LANCZOS)
+    return np.array(img)
+
+
+def _run_ocr(image_data) -> list:
     reader = get_reader()
-    
-    # Chuẩn hoá sang PIL Image để tiền xử lý
-    if isinstance(image_data, str):
-        pil_img = Image.open(image_data)
-    elif isinstance(image_data, np.ndarray):
-        pil_img = Image.fromarray(image_data)
-    elif isinstance(image_data, Image.Image):
-        pil_img = image_data
-    else:
-        pil_img = Image.open(image_data)
-        
-    if pil_img.mode != 'RGB':
-        pil_img = pil_img.convert('RGB')
-        
-    w_orig, h_orig = pil_img.size
-    
-    # ── Bước 1: Upscale bằng Lanczos để EasyOCR nhận diện rõ từng ô số nhỏ và số đơn lẻ ──
-    scale = 2.0 if w_orig < 1400 else 1.5
-    new_w, new_h = int(w_orig * scale), int(h_orig * scale)
-    img_scaled = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    from PIL import ImageEnhance
-    img_scaled = ImageEnhance.Contrast(img_scaled).enhance(1.25)
-    
-    # ── Bước 2: OCR với tham số tối ưu cho bảng điểm ──
-    results = reader.readtext(
-        np.array(img_scaled),
-        detail=1,
-        paragraph=False,
-        text_threshold=0.3,
-        low_text=0.2,
-        link_threshold=0.25,
-        mag_ratio=1.5
-    )
-    
-    scores: dict[str, float] = {}
-    raw_texts: list[str] = []
-    matched_lines: list[dict] = []
-    unmatched_lines: list[str] = []
-    warnings: list[str] = []
-    
-    # Chuẩn hoá danh sách items có toạ độ tương đối x_rel, y_rel
+    return reader.readtext(_prepare_image(image_data), detail=1, paragraph=False, width_ths=0.3)
+
+
+def _to_items(results) -> list[dict]:
     items = []
     for bbox, text, conf in results:
-        raw_texts.append(text)
-        xs = [p[0] for p in bbox]
-        ys = [p[1] for p in bbox]
+        text = str(text).strip()
+        if not text:
+            continue
+        pts = np.array(bbox, dtype=float)
+        x0, y0 = pts[:, 0].min(), pts[:, 1].min()
+        x1, y1 = pts[:, 0].max(), pts[:, 1].max()
         items.append({
-            "text": text.strip(),
-            "conf": conf,
-            "x_min": min(xs),
-            "x_max": max(xs),
-            "x_mid": (min(xs) + max(xs)) / 2,
-            "y_min": min(ys),
-            "y_max": max(ys),
-            "y_mid": (min(ys) + max(ys)) / 2,
-            "x_rel": ((min(xs) + max(xs)) / 2) / new_w,
-            "y_rel": ((min(ys) + max(ys)) / 2) / new_h,
+            "text": text, "conf": float(conf),
+            "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+            "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2, "h": max(y1 - y0, 1.0),
         })
-        
-    # ── Bước 3: Gom nhóm theo dòng theo toạ độ Y-mid ──
-    items.sort(key=lambda it: it["y_mid"])
-    y_thresh = 18 * scale
-    rows = []
+    return items
+
+
+def _group_lines(items: list[dict]) -> list[list[dict]]:
+    """Gom ô chữ thành dòng với ngưỡng THÍCH ỨNG theo chiều cao chữ."""
+    if not items:
+        return []
+    thr = max(8.0, 0.6 * float(np.median([i["h"] for i in items])))
+    lines: list[list[dict]] = []
+    cur: list[dict] = []
+    cur_y = 0.0
+    for it in sorted(items, key=lambda i: i["cy"]):
+        if cur and abs(it["cy"] - cur_y) <= thr:
+            cur.append(it)
+            cur_y = float(np.mean([c["cy"] for c in cur]))   # trung bình trượt, không bị trôi
+        else:
+            if cur:
+                lines.append(sorted(cur, key=lambda i: i["x0"]))
+            cur, cur_y = [it], it["cy"]
+    if cur:
+        lines.append(sorted(cur, key=lambda i: i["x0"]))
+    return lines
+
+
+# ============================================================
+# NHẬN DIỆN MÃ HỌC PHẦN
+# ============================================================
+_CODE_RE = re.compile(
+    r"(?<![A-Z0-9])([A-Z]{2})\s?([0-9OQDILSBZ|]{4})(?:\s?[.,]\s?(\d))?(?![0-9A-Z])"
+)
+_DIGIT_FIX = str.maketrans({"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1",
+                            "|": "1", "S": "5", "B": "8", "Z": "2"})
+
+
+def _find_code(text: str) -> tuple[str, str] | None:
+    """Trả (mã gốc 6 ký tự, mã đầy đủ) hoặc None. Sửa lỗi O/0, I/1, S/5 trong phần số."""
+    m = _CODE_RE.search(text.upper())
+    if not m:
+        return None
+    letters, digits, suffix = m.group(1), m.group(2), m.group(3)
+    if sum(c.isdigit() for c in digits) < 3:        # tránh nhầm từ thường thành mã
+        return None
+    base = letters + digits.translate(_DIGIT_FIX)
+    return base, base + (f".{suffix}" if suffix else "")
+
+
+_UNLEARNED_MARKERS = ("chua hoc", "chua co diem", "tong so tiet", "ma hoc phan", "tu chon")
+_QT_TOKEN_RE = re.compile(r"^[QO0]T$", re.I)
+_GRADE_LETTER_RE = re.compile(r"^[A-F](\s*\|\s*[A-F])?$|^BS$", re.I)
+
+
+# ============================================================
+# PHÂN TÍCH 1 TRANG
+# ============================================================
+def _parse_table_page(items: list[dict], state: dict) -> dict | None:
+    """Chế độ chính: neo theo mã học phần. Trả None nếu trang không giống bảng điểm."""
+    lines = _group_lines(items)
+
+    # --- 1. Vị trí bắt đầu bảng "chưa học" (cắt bỏ phần này) ---
+    cutoff_y = None
+    for ln in lines:
+        key = _norm_key(" ".join(i["text"] for i in ln))
+        if any(m in key for m in _UNLEARNED_MARKERS[:3]):
+            cutoff_y = min(i["y0"] for i in ln)
+            break
+    if cutoff_y is not None:
+        state["in_unlearned"] = True
+    elif state.get("in_unlearned"):
+        cutoff_y = -1.0                              # cả trang thuộc bảng "chưa học"
+
+    # --- 2. Cột TBCHP (chỉ dùng làm phương án dự phòng) ---
     for it in items:
-        placed = False
-        for r in rows:
-            r_y_mid = sum(x["y_mid"] for x in r) / len(r)
-            if abs(it["y_mid"] - r_y_mid) <= y_thresh:
-                r.append(it)
-                placed = True
+        if re.fullmatch(r"tbc\s?hp", _norm_key(it["text"]).replace(" ", "")):
+            state["tbchp_x"] = it["cx"]
+            state["tbchp_w"] = max(it["x1"] - it["x0"], 25.0)
+
+    # --- 3. Neo: mọi ô chứa mã học phần ---
+    anchors = []
+    anchor_src_ids = set()
+    for it in items:
+        found = _find_code(it["text"])
+        if found:
+            anchors.append({**it, "base": found[0], "full": found[1]})
+            anchor_src_ids.add(id(it))
+    anchors.sort(key=lambda a: a["cy"])
+    if len(anchors) < 3 and not state.get("seen_codes"):
+        return None
+    if anchors:
+        state["seen_codes"] = True
+
+    out = {"rows": [], "ignored": []}
+    if not anchors:
+        return out
+
+    gaps = np.diff([a["cy"] for a in anchors])
+    med_gap = float(np.median(gaps)) if len(gaps) else 60.0
+    max_dist = max(1.5 * med_gap, 40.0)
+
+    # --- 4. Gán ô chữ vào hàng gần nhất theo Y ---
+    rows = [{"anchor": a, "items": []} for a in anchors]
+    ys = np.array([a["cy"] for a in anchors])
+    for it in items:
+        if id(it) in anchor_src_ids:
+            continue
+        k = int(np.argmin(np.abs(ys - it["cy"])))
+        if abs(ys[k] - it["cy"]) <= max_dist:
+            rows[k]["items"].append(it)
+
+    pending: list[dict] = []
+    for row in rows:
+        a = row["anchor"]
+        if cutoff_y is not None and a["cy"] >= cutoff_y:
+            out["ignored"].append(a["full"])
+            continue
+
+        right = [i for i in row["items"] if i["cx"] > a["x1"] - 2]
+        a_w = max(a["x1"] - a["x0"], 30.0)
+
+        # ---- tên môn (chỉ để đối chiếu / dự phòng) ----
+        name_items = [i for i in right
+                      if i["cx"] < a["cx"] + 3.2 * a_w
+                      and re.search(r"[^\W\d_]", i["text"])
+                      and not _QT_TOKEN_RE.match(i["text"].strip())
+                      and not _GRADE_LETTER_RE.match(i["text"].strip())]
+        name_text = " ".join(" ".join(i["text"] for i in ln) for ln in _group_lines(name_items))
+
+        # ---- xác định môn chuẩn: MÃ trước, TÊN sau ----
+        subject = SUBJECT_CODES.get(a["base"])
+        via = "code"
+        by_name = match_subject(name_text) if name_text else None
+        if subject is None and by_name is not None:
+            subject, via = by_name, "name"
+        elif subject is not None and by_name is not None and by_name != subject:
+            state.setdefault("notes", []).append(
+                f"Mã {a['full']} -> '{subject}' nhưng tên đọc được giống '{by_name}'. Đã ưu tiên theo mã."
+            )
+        if subject is None:
+            out["ignored"].append(a["full"])
+            continue
+
+        # ---- dãy số theo thứ tự cột (trái -> phải) ----
+        num_items = [i for i in right if i["cx"] > a["x1"] + 0.5 * a_w]
+        num_items.sort(key=lambda i: (round(i["cx"] / 8), i["cy"]))
+        toks: list[tuple] = []
+        for i in num_items:
+            nums = _numbers_with_pos(i["text"])
+            for val, frac in nums:
+                toks.append((val, i["x0"] + frac * (i["x1"] - i["x0"]), i["cx"], len(nums)))
+
+        row_text = " ".join(i["text"] for i in sorted([a] + row["items"], key=lambda i: (round(i["cy"] / 10), i["x0"])))
+        pending.append({"subject": subject, "via": via, "code": a["full"], "toks": toks,
+                        "row_text": row_text, "row_items": row["items"],
+                        "conf": min([i["conf"] for i in num_items] or [a["conf"]])})
+
+    # --- 5. Tự hiệu chỉnh vị trí cột TBCHP từ các hàng đọc tốt (không phụ thuộc tiêu đề) ---
+    page_w = max((i["x1"] for i in items), default=1000.0)
+    tol = max(0.035 * page_w, 25.0)
+    xs = [r[2] for p_ in pending for r in [pick_row_score(p_["toks"])] if r[1] == "pair" and r[2] is not None]
+    if len(xs) >= 3:
+        state["tbchp_x"] = float(np.median(xs))
+    col_x = state.get("tbchp_x")
+    out["tbchp_x"] = col_x
+
+    # --- 6. Chọn điểm từng hàng, có kiểm tra cột ---
+    for p_ in pending:
+        score, method, _cx = pick_row_score(p_["toks"], col_x, tol, allow_column=False)
+
+        # hàng của bảng "chưa học": chỉ có [tín chỉ, số tiết] (vd 3 | 60), không "QT", không có cặp điểm
+        toks = p_["toks"]
+        if (score is None and toks
+                and any(t[0] <= 10 and float(t[0]).is_integer() for t in toks)
+                and any(t[0] >= 30 and float(t[0]).is_integer() and t[0] % 15 == 0 for t in toks)
+                and not re.search(r"\bQT\b", " ".join(i["text"] for i in p_["row_items"]), re.I)):
+            out["ignored"].append(p_["code"])
+            continue
+
+        if score is None:                                   # dự phòng: đọc thẳng theo cột TBCHP
+            score, method, _cx = pick_row_score(toks, col_x, tol, allow_column=True)
+
+        dbg = "" if score is not None else f"  | số đọc được: {[t[0] for t in toks]}, cột TBCHP x≈{None if col_x is None else int(col_x)}"
+        out["rows"].append({"subject": p_["subject"], "score": score, "code": p_["code"],
+                            "via": p_["via"], "method": method, "ocr_text": p_["row_text"] + dbg,
+                            "confidence": p_["conf"]})
+    return out
+
+
+def _parse_by_name(items: list[dict]) -> dict:
+    """Chế độ dự phòng cho ảnh không có cột mã (vd bảng điểm giấy).
+
+    Thử dòng của môn trước; chỉ nối thêm tối đa 2 dòng kế tiếp (không chứa môn khác)
+    khi dòng đó chưa đủ để tìm cặp [TBCHP, hệ 4]. Tránh hút điểm của môn bên dưới.
+    """
+    lines = _group_lines(items)
+    texts = [" ".join(i["text"] for i in ln) for ln in lines]
+    matched = [match_subject(t) for t in texts]
+    rows = []
+    for idx, subj in enumerate(matched):
+        if not subj:
+            continue
+        score, used = None, idx
+        for k in range(3):
+            j = idx + k
+            if j >= len(lines) or (k > 0 and matched[j]):
                 break
-        if not placed:
-            rows.append([it])
-            
-    score_regex = re.compile(r'(?<![\d.,])(\d{1,2}(?:[.,]\d)?)(?![\d.,])')
-    
-    # ── Bước 4: Duyệt từng dòng, ghép dòng nối tiếp và trích xuất điểm TBCHP ──
-    pending_row_items = []
-    
-    for r in rows:
-        r.sort(key=lambda it: it["x_min"])
-        full_line_text = " ".join([it['text'] for it in r])
-        
-        # Thử xem dòng hiện tại có chứa môn học không
-        direct_subject = match_subject(full_line_text)
-        
-        if direct_subject:
-            combined_items = r
-            subject = direct_subject
-            pending_row_items = []
-        else:
-            # Thử ghép với dòng chờ phía trước (xử lý tên môn bị ngắt dòng)
-            combined_items = pending_row_items + r
-            combined_text = " ".join([it['text'] for it in combined_items])
-            subject = match_subject(combined_text)
-            
-        if subject:
-            # ĐÃ MATCH ĐƯỢC MÔN HỌC!
-            extracted_score = None
-            
-            # --- Chiến lược A: Dựa vào cột toạ độ không gian chuẩn của bảng portal HAU ---
-            # Trong bảng điểm portal HAU:
-            # x_rel < 0.45: STT, Mã HP, Tên môn, Số TC, Lần học
-            # x_rel in [0.46, 0.54]: QT (Quá trình)
-            # x_rel in [0.54, 0.59]: Thi
-            # x_rel in [0.58, 0.67]: CỘT ĐIỂM TBCHP CHUẨN!
-            # x_rel in [0.67, 0.74]: Điểm hệ 4
-            # x_rel >= 0.74: Điểm chữ (A, B, C...)
-            tbchp_candidates = []
-            for it in combined_items:
-                if 0.58 <= it["x_rel"] <= 0.67:
-                    for m in score_regex.findall(it["text"]):
-                        try:
-                            val = float(m.replace(',', '.'))
-                            if 0.0 <= val <= 10.0:
-                                tbchp_candidates.append(val)
-                        except ValueError:
-                            pass
-                            
-            if tbchp_candidates:
-                extracted_score = tbchp_candidates[0]
-            else:
-                # --- Chiến lược B: Fallback dựa vào từ khoá QT và vị trí số ---
-                has_qt = any(re.search(r'(?:Q\s*T|0\s*T|O\s*T|Q\s*7|Q\s*I)', it["text"], re.IGNORECASE) for it in combined_items)
-                score_items = [it for it in combined_items if it["x_rel"] >= 0.48]
-                
-                # BẢO VỆ CHỐNG TÍCH NHẦM: Nếu không có QT và không có ô nào ở vùng điểm, môn này CHƯA CÓ ĐIỂM!
-                if not has_qt and not score_items:
-                    extracted_score = None
-                else:
-                    row_full_text = " ".join([it['text'] for it in combined_items])
-                    extracted_score = extract_score_from_text(row_full_text)
-                    
-            if extracted_score is not None:
-                if subject not in scores or extracted_score > scores[subject]:
-                    scores[subject] = extracted_score
-                    
-                matched_lines.append({
-                    "subject": subject,
-                    "score": extracted_score,
-                    "ocr_text": " ".join([it['text'] for it in combined_items]),
-                    "confidence": min([it['conf'] for it in combined_items]) if combined_items else 1.0,
-                })
-                pending_row_items = []
-            else:
-                # Môn này không có điểm (chưa học) -> Reset pending để không dính sang dòng sau
-                pending_row_items = []
-        else:
-            # Dòng không match được môn nào -> lưu lại chờ ghép nếu dòng ngắn (< 50 ký tự)
-            if len(full_line_text) < 50:
-                pending_row_items = r
-            else:
-                unmatched_lines.append(full_line_text)
-                pending_row_items = []
-                
-    # ============================================================
-    # Warnings
-    # ============================================================
-    if not scores:
-        warnings.append(
-            "⚠️ Không trích xuất được điểm nào từ ảnh. "
-            "Vui lòng kiểm tra: (1) Ảnh có rõ nét không? "
-            "(2) Ảnh có chứa bảng điểm với tên môn và điểm số không?"
+            score = pick_tbchp(_numbers_in(" ".join(texts[idx: j + 1])))
+            used = j
+            if score is not None:
+                break
+        if score is None:                                       # heuristic kiểu cũ, chỉ trên dòng gốc
+            score, used = extract_score_from_text(texts[idx]), idx
+        block = lines[idx: used + 1]
+        rows.append({"subject": subj, "score": score, "code": None, "via": "name", "method": "text",
+                     "ocr_text": " ".join(texts[idx: used + 1]),
+                     "confidence": min(i["conf"] for ln in block for i in ln)})
+    return {"rows": rows, "ignored": []}
+
+
+# ============================================================
+# API CHÍNH
+# ============================================================
+def _empty_result() -> dict:
+    return {"scores": {}, "raw_text": [], "matched_lines": [], "unmatched_lines": [], "warnings": []}
+
+
+def _finalize(res: dict, parsed: dict, state: dict) -> dict:
+    for r in parsed["rows"]:
+        if r["subject"] not in _STANDARD_SET:
+            continue
+        if r["score"] is None:
+            res["unmatched_lines"].append(f"[{r['code'] or r['subject']}] không đọc được điểm: {r['ocr_text']}")
+            continue
+        prev = res["scores"].get(r["subject"])
+        if prev is None or r["score"] > prev:                     # học lại: lấy điểm cao nhất
+            res["scores"][r["subject"]] = r["score"]
+        res["matched_lines"].append({k: r[k] for k in
+                                     ("subject", "score", "ocr_text", "confidence", "code", "via", "method")})
+    return res
+
+
+def _add_warnings(res: dict, state: dict) -> dict:
+    n = len(res["scores"])
+    if n == 0:
+        res["warnings"].append(
+            "⚠️ Không trích xuất được điểm nào từ ảnh. Hãy kiểm tra: (1) ảnh có rõ nét không? "
+            "(2) ảnh có chứa bảng điểm với mã học phần / tên môn và điểm số không?"
         )
-    elif len(scores) < 5:
-        warnings.append(
-            f"⚠️ Chỉ trích xuất được {len(scores)}/24 môn. "
-            "Kết quả có thể không chính xác. "
-            "Bạn nên kiểm tra lại các điểm đã trích xuất."
-        )
-    
-    return {
-        "scores": scores,
-        "raw_text": raw_texts,
-        "matched_lines": matched_lines,
-        "unmatched_lines": unmatched_lines,
-        "warnings": warnings,
-    }
+    elif n < 5:
+        res["warnings"].append(f"⚠️ Chỉ trích xuất được {n}/24 môn. Bạn nên kiểm tra lại các điểm đã trích xuất.")
+    res["warnings"].extend("ℹ️ " + s for s in state.get("notes", []))
+    res["not_found"] = [s for s in STANDARD_SUBJECTS if s not in res["scores"]]
+    return res
+
+
+def extract_scores_from_image(image_data, state: dict | None = None) -> dict:
+    """Trích xuất điểm các môn chuẩn từ MỘT ảnh bảng điểm.
+
+    Args:
+        image_data: PIL Image, numpy array hoặc đường dẫn file ảnh.
+        state: dict dùng chung giữa các trang của cùng 1 bảng điểm
+               (nhớ vị trí cột TBCHP và việc đã vào bảng "chưa học").
+               extract_scores_from_pdf() tự quản lý; ảnh đơn có thể bỏ trống.
+
+    Returns:
+        dict: scores, raw_text, matched_lines, unmatched_lines, warnings, not_found
+    """
+    state = state if state is not None else {}
+    results = _run_ocr(image_data)
+    items = _to_items(results)
+
+    res = _empty_result()
+    res["raw_text"] = [i["text"] for i in sorted(items, key=lambda i: (i["cy"], i["x0"]))]
+
+    parsed = _parse_table_page(items, state)
+    if parsed is None and not state.get("in_unlearned"):
+        parsed = _parse_by_name(items)
+    if parsed:
+        _finalize(res, parsed, state)
+    return _add_warnings(res, state)
+
+
+def extract_scores_from_pdf(pdf_path, dpi: int = 300) -> dict:
+    """PDF bảng điểm (kể cả PDF dạng ảnh scan / Print-to-PDF) -> điểm các môn chuẩn.
+
+    Mỗi trang được render rồi OCR; trạng thái cột/bảng được truyền xuyên suốt các trang,
+    nhờ đó trang 3, 4 (không có dòng tiêu đề) vẫn đọc đúng và bảng "chưa học" ở
+    trang 4-6 bị bỏ qua hoàn toàn.
+    """
+    # pyrefly: ignore [missing-import]
+    from pdf2image import convert_from_path
+
+    state: dict = {}
+    total = _empty_result()
+    for page_no, page in enumerate(convert_from_path(str(pdf_path), dpi=dpi), 1):
+        r = extract_scores_from_image(page, state=state)
+        for subj, sc in r["scores"].items():
+            if subj not in total["scores"] or sc > total["scores"][subj]:
+                total["scores"][subj] = sc
+        total["raw_text"] += r["raw_text"]
+        total["matched_lines"] += [{**m, "page": page_no} for m in r["matched_lines"]]
+        total["unmatched_lines"] += [f"(trang {page_no}) {u}" for u in r["unmatched_lines"]]
+    return _add_warnings(total, state)
 
 
 def build_full_score_dict(extracted_scores: dict[str, float]) -> dict[str, float]:
-    """Xây dựng dict 24 môn đầy đủ từ điểm đã trích xuất.
-    
-    Các môn không có điểm sẽ được gán -1.0 (chưa học).
-    
-    Args:
-        extracted_scores: dict từ extract_scores_from_image()['scores']
-        
-    Returns:
-        dict[str, float] — 24 môn với giá trị điểm hoặc -1.0
-    """
-    full_scores = {}
-    for subject in STANDARD_SUBJECTS:
-        if subject in extracted_scores:
-            full_scores[subject] = extracted_scores[subject]
-        else:
-            full_scores[subject] = -1.0
-    return full_scores
-
-
-
+    """Đủ 24 môn; môn không có điểm (chưa học) = -1.0."""
+    return {s: extracted_scores.get(s, -1.0) for s in STANDARD_SUBJECTS}
