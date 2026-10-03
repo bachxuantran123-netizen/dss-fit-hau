@@ -4,14 +4,14 @@
 
 ## 📋 Mô tả
 
-Ứng dụng **Personal DSS (Decision Support System)** sử dụng kiến trúc **Hybrid 2 tầng + OCR** để:
-- **Trích xuất điểm tự động từ ảnh** bảng điểm bằng AI-OCR (EasyOCR), hỗ trợ ảnh chụp bảng điểm giấy, screenshot portal trường, screenshot PDF.
+Ứng dụng **Personal DSS (Decision Support System)** sử dụng kiến trúc **Hybrid 3 tầng** để:
+- **Trích xuất điểm tự động từ file PDF** bảng điểm sinh viên bằng `pdfplumber`, hỗ trợ đọc bảng điểm số, mã học phần và chuẩn hóa tên môn.
 - **Gán nhãn thông minh** bằng Content-Based Filtering (Cosine Similarity) giữa vector điểm sinh viên và Career Profile Vectors.
 - **Dự đoán chuyên ngành** phù hợp nhất trong 5 hướng nghề nghiệp: Software Engineer, Data Engineer, AI Engineer, Security Engineer, System/DevOps.
 - **Giải thích minh bạch** lý do đề xuất thông qua Explainable AI (XAI) bằng ngôn ngữ tự nhiên.
 - **Trực quan hóa** điểm số bằng biểu đồ (Horizontal Bar Chart) và xuất báo cáo kết quả định dạng Excel.
 
-## 🏗️ Kiến trúc Hệ thống (Hybrid 3 Tầng + OCR)
+## 🏗️ Kiến trúc Hệ thống (Hybrid 3 Tầng)
 
 ```
 Offline Training Pipeline                                  Online Inference (Web)
@@ -20,8 +20,8 @@ Offline Training Pipeline                                  Online Inference (Web
 │  (Cào điểm từ PDF)                     │                │    (Streamlit Wizard UI)        │
 │         ↓                              │                │                                 │
 │  2. data_pipeline.py                   │                │  ┌───────────────────────────┐  │
-│  ┌─────────────────────────────────┐   │                │  │ OCR Layer (image_ocr.py)  │  │
-│  │ Tầng 1: Content-Based Filtering │   │                │  │ Upload ảnh → EasyOCR      │  │
+│  ┌─────────────────────────────────┐   │                │  │ PDF Extraction Layer      │  │
+│  │ Tầng 1: Content-Based Filtering │   │                │  │ Upload PDF → pdfplumber   │  │
 │  │ Cosine Sim(SV, Career Profile)  │   │                │  │ → Trích xuất điểm 24 môn  │  │
 │  │ → Gán nhãn 5 chuyên ngành      │   │                │  └─────────────┬─────────────┘  │
 │  └─────────────────────────────────┘   │                │                ↓                │
@@ -39,7 +39,7 @@ Offline Training Pipeline                                  Online Inference (Web
 
 | Tầng | Phương pháp | Vai trò |
 |------|-------------|---------|
-| **OCR** | EasyOCR (Vietnamese + English) | Upload ảnh bảng điểm → AI tự động trích xuất tên môn & điểm số → Fuzzy keyword matching sang 24 môn chuẩn. |
+| **Trích xuất PDF** | pdfplumber + Fuzzy Matching | Upload bảng điểm PDF → Tự động trích xuất mã môn, tên môn & điểm số TBCHP → Mapping chuẩn xác 24 môn chuẩn. |
 | **Tầng 1** | Content-Based Filtering (Cosine Similarity) | Gán nhãn cho dữ liệu training — thay thế Skill Matrix heuristic cũ. So sánh pattern điểm 24 môn với 5 Career Profile Vectors. |
 | **Tầng 2** | Decision Tree (GridSearchCV) | Học từ nhãn đã gán → dự đoán nhanh cho user mới + cung cấp giải thích (XAI) qua decision_path. |
 | **Tầng 3** | Heuristic Rules (Hybrid Score) | Tích hợp online: Kết hợp xác suất từ AI với Trọng số Sở thích người dùng để đưa ra Bảng Xếp Hạng cá nhân hóa chính xác nhất. |
@@ -53,12 +53,11 @@ DSS FIT-HAU/
 │   ├── processed/          → Data đã làm sạch và gán nhãn (FIT_HAU_Cleaned.csv)
 │   └── feedback.csv        → Dữ liệu đánh giá UAT của người dùng
 ├── src/
-│   ├── pdf_extractor.py    → Trích xuất và gom bảng điểm từ hàng trăm file PDF
+│   ├── pdf_extractor.py    → Trích xuất điểm từ bảng điểm PDF sinh viên & cào data hàng loạt
 │   ├── merge_new_data.py   → Hợp nhất dữ liệu điểm 4 môn mới vào file điểm gốc
 │   ├── data_pipeline.py    → Xử lý dữ liệu & Gán nhãn bằng Content-Based Filtering (Cosine Similarity)
 │   ├── train_core.py       → Huấn luyện Decision Tree (GridSearchCV)
-│   ├── image_ocr.py        → 🆕 Module OCR: Trích xuất điểm từ ảnh bảng điểm (EasyOCR)
-│   └── app.py              → Giao diện Web Streamlit (Wizard Flow, OCR Upload, XAI, Hybrid Score)
+│   └── app.py              → Giao diện Web Streamlit (Wizard Flow, PDF Upload, XAI, Hybrid Score)
 ├── models/                 → File mô hình .pkl (Joblib)
 ├── reports/                → Biểu đồ đánh giá (Confusion Matrix, Tree Plot)
 ├── documents/              → Tài liệu dự án (Backlog, kế hoạch, kiến trúc)
