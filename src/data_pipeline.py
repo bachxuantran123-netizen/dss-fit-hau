@@ -67,7 +67,7 @@ FEATURE_ORDER: list[str] = [
 # ============================================================
 # CAREER PROFILE VECTORS — Content-Based Filtering
 # ============================================================
-# Mỗi Career Profile là 1 vector 20 chiều, giá trị [0.0, 1.0]:
+# Mỗi Career Profile là 1 vector 24 chiều, giá trị [0.0, 1.0]:
 #   0.0 = môn không liên quan đến ngành này
 #   1.0 = môn cốt lõi (core competency) của ngành này
 #
@@ -144,80 +144,110 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def cosine_similarity_score(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
-    """Tính Cosine Similarity giữa 2 vectors.
+    """Tính Cosine Similarity giữa vector điểm sinh viên và vector nghề nghiệp.
 
-    Cosine Similarity = (A · B) / (||A|| × ||B||)
+    Logic:
+        - Sinh viên học môn nào thì chỉ cắt lấy các môn đó ra để tính Cosine Similarity.
+        - Môn nào chưa học (điểm == -1.0 hoặc < 0) thì bỏ qua hoàn toàn, không tính vào vector.
+        - Cả vector sinh viên (vec_a) và vector nghề nghiệp (vec_b) đều được cắt theo các môn đã học.
+
+    Cosine Similarity = (A_sub · B_sub) / (||A_sub|| × ||B_sub||)
 
     Returns:
-        float trong khoảng [-1.0, 1.0], thường [0.0, 1.0] vì điểm >= 0.
-        Trả về 0.0 nếu một trong hai vector có norm = 0 (toàn số 0).
+        float trong khoảng [0.0, 1.0].
+        Trả về 0.0 nếu sinh viên chưa học môn nào hoặc norm = 0.
     """
-    norm_a = np.linalg.norm(vec_a)
-    norm_b = np.linalg.norm(vec_b)
+    valid_mask = (vec_a != -1.0) & (vec_a >= 0)
+    if not np.any(valid_mask):
+        return 0.0
+
+    sub_a = vec_a[valid_mask]
+    sub_b = vec_b[valid_mask]
+
+    norm_a = np.linalg.norm(sub_a)
+    norm_b = np.linalg.norm(sub_b)
 
     if norm_a == 0 or norm_b == 0:
         return 0.0
 
-    return float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+    return float(np.dot(sub_a, sub_b) / (norm_a * norm_b))
 
 
 def assign_labels(df: pd.DataFrame) -> pd.DataFrame:
     """Gán nhãn chuyên ngành bằng Content-Based Filtering (Cosine Similarity).
 
-    Logic:
-        1. Lấy vector điểm 24 môn của sinh viên (theo FEATURE_ORDER).
-        2. Tính Cosine Similarity với từng Career Profile Vector bằng NumPy Broadcasting.
-        3. Gán nhãn = ngành có similarity cao nhất.
-        4. Nếu tất cả similarity = 0 (toàn điểm 0) → gán "Software Engineer".
+    Cải tiến (Dynamic Slicing theo môn đã học):
+        - Thay vì so sánh cả 24 môn (coi môn chưa học là 0 làm sai lệch chuẩn vector nghề nghiệp),
+          sinh viên học môn nào thì chỉ cắt lấy các môn đó ra để tính Cosine Similarity.
+        - Môn nào chưa học (-1.0 hoặc < 0) thì bỏ qua hoàn toàn, không tính vào vector.
+        - Vector nghề nghiệp cũng chỉ cắt lấy đúng các môn tương ứng mà sinh viên đã học.
 
-    So với SKILL_MATRIX cũ:
-        - SKILL_MATRIX: chỉ xét nhóm con môn học, so trung bình → thiên lệch
-        - Cosine Sim: xét TOÀN BỘ 24 môn đồng thời, đo pattern → công bằng hơn
+    Công thức:
+        Với mỗi sinh viên i có tập môn đã học K_i:
+        - Vector sinh viên: s_{K_i} = [score_{i, j}]_{j in K_i}
+        - Vector nghề nghiệp c: p_{c, K_i} = [profile_{c, j}]_{j in K_i}
+        - Cosine Similarity = (s_{K_i} · p_{c, K_i}) / (||s_{K_i}|| × ||p_{c, K_i}||)
     """
     df_labeled = df.copy()
 
     # Xác định các feature thực tế có trong DataFrame
     missing_features = [f for f in FEATURE_ORDER if f not in df_labeled.columns]
     if missing_features:
-        print(f"      ⚠️  Missing features (sẽ dùng giá trị 0): {missing_features}")
+        print(f"      ⚠️  Missing features (sẽ dùng giá trị -1.0): {missing_features}")
 
-    # 1. Trích xuất ma trận điểm theo FEATURE_ORDER, điền 0.0 cho các môn thiếu
-    score_matrix = df_labeled.reindex(columns=FEATURE_ORDER, fill_value=0.0).values
-    
-    # ⚠️ QUAN TRỌNG: Tạm thời chuyển -1.0 (chưa học) thành 0.0 
-    # để tính Cosine Similarity (tránh bị trừ điểm âm)
-    calc_matrix = np.where(score_matrix == -1.0, 0.0, score_matrix)
+    # 1. Trích xuất ma trận điểm theo FEATURE_ORDER, điền -1.0 cho các môn thiếu (chưa học)
+    score_matrix = df_labeled.reindex(columns=FEATURE_ORDER, fill_value=-1.0).values
 
-    # 2. Xây dựng ma trận Profile
+    # Xác định mask các môn đã học (khác -1.0 và >= 0)
+    # Môn nào chưa học (-1.0) thì bỏ qua hoàn toàn khỏi vector
+    valid_mask = (score_matrix != -1.0) & (score_matrix >= 0)
+    calc_matrix = np.where(valid_mask, score_matrix, 0.0)
+
+    # 2. Xây dựng ma trận Profile (M ngành × 24 môn)
     careers = list(CAREER_PROFILES.keys())
     profile_matrix = np.array([CAREER_PROFILES[c] for c in careers])
 
-    # 3. Tính Cosine Similarity bằng NumPy broadcasting
-    dot_products = np.dot(calc_matrix, profile_matrix.T)
-    student_norms = np.linalg.norm(calc_matrix, axis=1)
-    profile_norms = np.linalg.norm(profile_matrix, axis=1)
+    # 3. Tính Cosine Similarity chỉ trên các môn sinh viên đã học:
+    # Tử số: Tích vô hướng (A · B) chỉ trên các môn đã học (calc_matrix = 0 ở môn chưa học)
+    dot_products = np.dot(calc_matrix, profile_matrix.T)  # Shape (N, M)
 
-    # Tránh chia cho 0
-    student_norms[student_norms == 0] = 1e-10
+    # Chuẩn của vector sinh viên ||A_sub|| (chỉ tính trên các môn đã học)
+    student_norms = np.linalg.norm(calc_matrix, axis=1)  # Shape (N,)
 
-    # similarity_matrix: (N, M)
-    similarity_matrix = dot_products / (student_norms[:, np.newaxis] * profile_norms)
+    # Chuẩn của vector nghề nghiệp ||B_sub|| CŨNG CHỈ TÍNH TRÊN CÁC MÔN SINH VIÊN ĐÃ HỌC
+    # Môn chưa học bị loại bỏ hoàn toàn khỏi chuẩn độ dài của profile
+    profile_sq = profile_matrix ** 2
+    sub_profile_norm_sq = np.dot(valid_mask.astype(float), profile_sq.T)
+    sub_profile_norms = np.sqrt(sub_profile_norm_sq)  # Shape (N, M)
+
+    # Mẫu số: ||A_sub|| × ||B_sub||
+    denominator = student_norms[:, np.newaxis] * sub_profile_norms  # Shape (N, M)
+
+    # Tính Cosine Similarity, tránh chia cho 0 khi mẫu số <= 0 hoặc SV chưa học môn nào
+    similarity_matrix = np.divide(
+        dot_products,
+        denominator,
+        out=np.zeros_like(dot_products),
+        where=denominator > 1e-9
+    )
 
     # Lấy nhãn cao nhất
     best_career_indices = np.argmax(similarity_matrix, axis=1)
     labels = np.array([careers[i] for i in best_career_indices])
 
-    # Fallback cho trường hợp toàn 0 (dùng vectorization mask, không dùng for loop)
-    zero_norm_mask = (student_norms == 1e-10)
+    # Fallback cho trường hợp toàn 0 (chưa học môn nào hoặc tất cả similarity = 0)
+    zero_norm_mask = (student_norms == 0) | (np.max(similarity_matrix, axis=1) == 0)
     labels[zero_norm_mask] = "Software Engineer"
 
     df_labeled[TARGET_COLUMN] = labels
 
-    # In thống kê similarity trung bình theo ngành
+    # In thống kê similarity trung bình theo ngành (chỉ tính trên các sinh viên có điểm)
+    active_mask = ~zero_norm_mask
     sim_df = pd.DataFrame(similarity_matrix, columns=careers)
-    print("      📊 Cosine Similarity trung bình theo Career Profile:")
+    print("      📊 Cosine Similarity trung bình theo Career Profile (trên các môn đã học):")
     for career in careers:
-        print(f"         {career}: {sim_df[career].mean():.4f}")
+        avg_sim = sim_df.loc[active_mask, career].mean() if active_mask.any() else 0.0
+        print(f"         {career}: {avg_sim:.4f}")
 
     return df_labeled
 
