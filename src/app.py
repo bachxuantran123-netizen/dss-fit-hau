@@ -11,6 +11,7 @@ Architecture (Hybrid 2 tầng + Rule-based Preferences):
 """
 
 import os
+import sys
 import io
 import csv
 import datetime
@@ -18,6 +19,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import joblib
+
+# Ensure current script directory is in sys.path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 # Local PDF extractor
 from pdf_extractor import extract_scores_from_student_pdf
 
