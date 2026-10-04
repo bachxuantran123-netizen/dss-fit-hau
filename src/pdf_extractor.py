@@ -330,9 +330,9 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes: str | BinaryIO, save_csv_
                 matched = match_subject_ocr(norm_line)
                 if matched:
                     # Tìm điểm trong dòng
-                    score_match = SCORE_PATTERN.search(full_line)
-                    if score_match:
-                        score_str = score_match.group(1).replace(',', '.')
+                    score_matches = SCORE_PATTERN.findall(full_line)
+                    if score_matches:
+                        score_str = score_matches[-1].replace(',', '.')
                         try:
                             score_val = float(score_str)
                             if 0.0 <= score_val <= 10.0:
@@ -355,9 +355,9 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes: str | BinaryIO, save_csv_
                     # Dòng không match môn nhưng có pending → thử nối
                     combined = (pending_subj + " " + full_line).strip()
                     matched_combined = match_subject_ocr(normalize_text(combined))
-                    score_match = SCORE_PATTERN.search(full_line)
-                    if matched_combined and score_match:
-                        score_str = score_match.group(1).replace(',', '.')
+                    score_matches = SCORE_PATTERN.findall(full_line)
+                    if matched_combined and score_matches:
+                        score_str = score_matches[-1].replace(',', '.')
                         try:
                             score_val = float(score_str)
                             if 0.0 <= score_val <= 10.0:
@@ -377,8 +377,8 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes: str | BinaryIO, save_csv_
                     # Dòng chứa điểm cho pending subject?
                     if not matched_combined and pending_subj:
                         pend_matched = match_subject_ocr(normalize_text(pending_subj))
-                        if pend_matched and score_match:
-                            score_str = score_match.group(1).replace(',', '.')
+                        if pend_matched and score_matches:
+                            score_str = score_matches[-1].replace(',', '.')
                             try:
                                 score_val = float(score_str)
                                 if 0.0 <= score_val <= 10.0:
@@ -423,9 +423,9 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes: str | BinaryIO, save_csv_
                 
                 if matched_subj:
                     found_score = False
-                    match = SCORE_PATTERN.search(combined_score)
-                    if match:
-                        score_str = match.group(1).replace(',', '.')
+                    matches = SCORE_PATTERN.findall(combined_score)
+                    if matches:
+                        score_str = matches[-1].replace(',', '.')
                         try:
                             score = float(score_str)
                             if 0.0 <= score <= 10.0:
