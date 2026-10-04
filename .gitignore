@@ -27,6 +27,7 @@ desktop.ini
 data/raw/*.csv
 data/raw/ĐIỂM NĂM 24-25/
 data/feedback.csv
+data/processed/*.csv
 
 # === Model binary (file lớn, không push) ===
 models/*.pkl

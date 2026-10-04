@@ -33,7 +33,7 @@ TARGET_COLUMN: str = "Chuyen_Nganh"
 NON_FEATURE_COLUMNS: list[str] = ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]
 
 # ============================================================
-# FEATURE ORDER — Thứ tự chuẩn 20 môn (alphabet tiếng Việt)
+# FEATURE ORDER — Thứ tự chuẩn 24 môn (alphabet tiếng Việt)
 # ============================================================
 # Thứ tự này PHẢI khớp chính xác với thứ tự các giá trị trong
 # CAREER_PROFILES bên dưới. Khi thêm/bớt môn, cập nhật CẢ HAI.

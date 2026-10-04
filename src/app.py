@@ -6,8 +6,8 @@ Giao diện Web cho Hệ Trợ Giúp Quyết Định Học Tập FIT-HAU.
 Architecture (Hybrid 2 tầng + Rule-based Preferences):
     - Tầng 1: Content-Based Filtering (Cosine Similarity) → Gán nhãn
     - Tầng 2: Decision Tree → Dự đoán + XAI
-    - Tầng 3 (Mới): Hybrid Score = AI Score + Preference Bonus
-    - OCR (Mới): Upload ảnh bảng điểm → Tự động trích xuất điểm
+    - Tầng 3: Hybrid Score = AI Score + Preference Bonus
+    - PDF Upload: Tải lên bảng điểm PDF → Tự động trích xuất điểm (pdfplumber)
 """
 
 import os
@@ -18,18 +18,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import joblib
-# Local PDF extractor
+from sklearn.tree import DecisionTreeClassifier
+# Local modules
 from pdf_extractor import extract_scores_from_student_pdf
-
-STANDARD_SUBJECTS: list[str] = [
-    "AN NINH MẠNG", "AN TOÀN VÀ BẢO MẬT HTTT", "C#", "CÔNG NGHỆ PHẦN MỀM",
-    "CƠ SỞ DỮ LIỆU", "CẤU TRÚC DỮ LIỆU VÀ GIẢI THUẬT", "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
-    "HỆ QUẢN TRỊ CƠ SỞ DỮ LIỆU", "HỆ ĐIỀU HÀNH", "HỆ ĐIỀU HÀNH LINUX", "JAVA",
-    "KIẾN TRÚC MÁY TÍNH", "KỸ THUẬT LẬP TRÌNH", "KỸ THUẬT ĐỒ HOẠ MÁY TÍNH",
-    "LẬP TRÌNH HƯỚNG ĐỐI TƯỢNG", "LẬP TRÌNH WEB", "MẠNG MÁY TÍNH",
-    "NHẬP MÔN CNTT VÀ TRUYỀN THÔNG", "PHÂN TÍCH VÀ THIẾT KẾ HTTT", "QUẢN TRỊ MẠNG MÁY TÍNH",
-    "TOÁN RỜI RẠC", "TRÍ TUỆ NHÂN TẠO", "XỬ LÝ TÍN HIỆU SỐ", "XỬ LÝ ẢNH",
-]
+from data_pipeline import FEATURE_ORDER
 
 # ============================================================
 # CONSTANTS & CONFIGS
@@ -65,7 +57,7 @@ CAREER_ADVICE = {
 # CORE FUNCTIONS
 # ============================================================
 @st.cache_resource
-def load_model():
+def load_model() -> DecisionTreeClassifier:
     """Load trained Decision Tree model from .pkl file."""
     if not os.path.exists(MODEL_PATH):
         st.error(f"Lỗi: Không tìm thấy file mô hình tại `{MODEL_PATH}`. Vui lòng huấn luyện mô hình trước.")
@@ -93,7 +85,7 @@ def validate_scores(scores: dict[str, float]) -> tuple[bool, str]:
     return True, ""
 
 
-def explain_decision(model, input_data: pd.DataFrame) -> list[dict]:
+def explain_decision(model: DecisionTreeClassifier, input_data: pd.DataFrame) -> list[dict]:
     """Trace the decision_path of the Decision Tree and extract logic."""
     node_indicator = model.decision_path(input_data)
     leaf_id = model.apply(input_data)
@@ -404,7 +396,7 @@ def main() -> None:
                                 )
                             elif len(merged_scores) < 5:
                                 all_warnings.append(
-                                    f"⚠️ Chỉ trích xuất được {len(merged_scores)}/{len(STANDARD_SUBJECTS)} môn từ {len(uploaded_files)} file. "
+                                    f"⚠️ Chỉ trích xuất được {len(merged_scores)}/{len(FEATURE_ORDER)} môn từ {len(uploaded_files)} file. "
                                     "Kết quả có thể không chính xác."
                                 )
                             
@@ -466,7 +458,7 @@ def main() -> None:
             
             # Thống kê kết quả trích xuất
             n_extracted = len(ocr_scores)
-            n_total = len(STANDARD_SUBJECTS)
+            n_total = len(FEATURE_ORDER)
             n_images = ocr_result.get('num_images', 1)
             
             col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
@@ -564,6 +556,7 @@ def main() -> None:
                     is_valid, err_msg = validate_scores(scores_dict)
                     if not is_valid:
                         st.error(err_msg)
+                        st.stop()
                     else:
                         st.session_state.scores_dict = scores_dict
                         st.session_state.step = 3

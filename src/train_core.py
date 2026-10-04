@@ -9,7 +9,7 @@ Kiến trúc Hybrid 2 tầng:
     Tầng 2 (file này): Decision Tree (GridSearchCV)
         → Học từ nhãn đã gán, dự đoán cho user mới, cung cấp XAI.
 
-Hỗ trợ linh hoạt cấu trúc dữ liệu mở rộng với 20 features (môn học).
+Hỗ trợ linh hoạt cấu trúc dữ liệu mở rộng với 24 features (môn học).
 """
 
 import os
@@ -49,7 +49,7 @@ def load_processed_data(filepath: str = PROCESSED_DATA_PATH) -> pd.DataFrame:
     return df
 
 
-def split_data(df: pd.DataFrame) -> tuple:
+def split_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, list[str]]:
     """Chia tập dữ liệu thành train/test tự động dựa trên các cột thực tế có trong df.
 
     Returns:
@@ -90,7 +90,7 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> DecisionTreeClassi
     return grid_search.best_estimator_
 
 
-def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd.Series, feature_columns: list[str]):
+def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd.Series, feature_columns: list[str]) -> float:
     """Đánh giá hiệu suất mô hình trên tập test và lưu các biểu đồ."""
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)

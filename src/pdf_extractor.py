@@ -12,12 +12,13 @@ import sys
 import re
 import pdfplumber
 import pandas as pd
+from typing import BinaryIO
 
 # Fix Windows console encoding
 sys.stdout.reconfigure(encoding='utf-8')
 
-# pyrefly: ignore [missing-import]
-from image_ocr import match_subject as match_subject_ocr, normalize_text, SCORE_PATTERN
+# Subject name matching for student transcript PDFs
+from subject_matcher import match_subject as match_subject_ocr, normalize_text, SCORE_PATTERN
 
 # ============================================================
 # CONSTANTS
@@ -229,7 +230,7 @@ def run_extraction() -> pd.DataFrame:
 # ============================================================
 # PDF READER (cho bảng điểm định dạng PDF của 1 sinh viên)
 # ============================================================
-def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> dict:
+def extract_scores_from_student_pdf(pdf_file_or_bytes: str | BinaryIO, save_csv_path: str | None = None) -> dict:
     """Trích xuất điểm từ bảng điểm cá nhân dạng PDF.
     
     Đọc toàn bộ file PDF, trích xuất bảng, xuất ra CSV nếu có save_csv_path.
