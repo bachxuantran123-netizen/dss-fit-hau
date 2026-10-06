@@ -34,7 +34,6 @@ CONFUSION_MATRIX_PATH: str = os.path.join("reports", "dss_confusion_matrix.png")
 TREE_PLOT_PATH: str = os.path.join("reports", "dss_tree.png")
 
 TARGET_COLUMN: str = "Chuyen_Nganh"
-FEATURE_COLUMNS: list[str] = []  # Sẽ được tự động cập nhật dựa trên dữ liệu thực tế
 
 
 # ============================================================
@@ -50,24 +49,29 @@ def load_processed_data(filepath: str = PROCESSED_DATA_PATH) -> pd.DataFrame:
     return df
 
 
-def split_data(df: pd.DataFrame):
-    """Chia tập dữ liệu thành train/test tự động dựa trên các cột thực tế có trong df."""
-    global FEATURE_COLUMNS
-    # Xác định tất cả các cột làm feature (loại bỏ cột target)
-    FEATURE_COLUMNS = [col for col in df.columns if col != TARGET_COLUMN]
+def split_data(df: pd.DataFrame) -> tuple:
+    """Chia tập dữ liệu thành train/test tự động dựa trên các cột thực tế có trong df.
 
-    if not FEATURE_COLUMNS:
+    Returns:
+        tuple: (X_train, X_test, y_train, y_test, feature_columns)
+    """
+    # Xác định tất cả các cột làm feature (loại bỏ cột target)
+    feature_columns = [col for col in df.columns if col != TARGET_COLUMN]
+
+    if not feature_columns:
         raise ValueError("Không tìm thấy cột feature nào trong DataFrame sau khi loại bỏ cột target.")
 
-    X = df[FEATURE_COLUMNS]
+    X = df[feature_columns]
     y = df[TARGET_COLUMN]
 
     # Chia train/test (80% / 20%), giữ nguyên tỷ lệ nhãn bằng stratify nếu có thể
     try:
-        return train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     except ValueError:
         # Trường hợp một số lớp quá ít mẫu không thể stratify
-        return train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    return X_train, X_test, y_train, y_test, feature_columns
 
 
 def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> DecisionTreeClassifier:
@@ -86,7 +90,7 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> DecisionTreeClassi
     return grid_search.best_estimator_
 
 
-def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd.Series):
+def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd.Series, feature_columns: list[str]):
     """Đánh giá hiệu suất mô hình trên tập test và lưu các biểu đồ."""
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
@@ -113,7 +117,7 @@ def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd
     # 2. Sinh và lưu Sơ đồ cây (Tree Plot)
     fig, ax = plt.subplots(figsize=(20, 10))
     # Giới hạn max_depth=3 để cây không bị rối rắm trên hình vẽ
-    plot_tree(clf, feature_names=FEATURE_COLUMNS, class_names=clf.classes_, filled=True, rounded=True, ax=ax, fontsize=10, max_depth=3)
+    plot_tree(clf, feature_names=feature_columns, class_names=clf.classes_, filled=True, rounded=True, ax=ax, fontsize=10, max_depth=3)
     plt.title("Cấu trúc Cây Quyết Định (Top 3 Levels)")
     plt.tight_layout()
     plt.savefig(TREE_PLOT_PATH, dpi=300)
@@ -143,8 +147,8 @@ def run_training_pipeline() -> DecisionTreeClassifier:
 
     # Step 2: Split data
     print("\n[2/5] Splitting train/test (80%/20%)...")
-    X_train, X_test, y_train, y_test = split_data(df)
-    print(f"      ✅ Features used: {len(FEATURE_COLUMNS)} columns")
+    X_train, X_test, y_train, y_test, feature_columns = split_data(df)
+    print(f"      ✅ Features used: {len(feature_columns)} columns")
     print(f"      ✅ Train samples: {len(X_train)} | Test samples: {len(X_test)}")
 
     # Step 3: Train model
@@ -154,7 +158,7 @@ def run_training_pipeline() -> DecisionTreeClassifier:
 
     # Step 4: Evaluate model
     print("\n[4/5] Evaluating model performance...")
-    evaluate_model(clf, X_test, y_test)
+    evaluate_model(clf, X_test, y_test, feature_columns)
 
     # Step 5: Save model
     print("\n[5/5] Saving trained model artifact...")

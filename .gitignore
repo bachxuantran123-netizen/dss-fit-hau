@@ -25,6 +25,8 @@ desktop.ini
 
 # === Data (raw CSV không push lên Git) ===
 data/raw/*.csv
+data/raw/ĐIỂM NĂM 24-25/
+data/feedback.csv
 
 # === Model binary (file lớn, không push) ===
 models/*.pkl
