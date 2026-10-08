@@ -42,6 +42,7 @@ STANDARD_SUBJECTS: list[str] = [
 MODEL_PATH: str = os.path.join("models", "dss_brain.pkl")
 CONFUSION_MATRIX_PATH: str = os.path.join("reports", "dss_confusion_matrix.png")
 TREE_PLOT_PATH: str = os.path.join("reports", "dss_tree.png")
+FEATURE_IMPORTANCE_PATH: str = os.path.join("reports", "dss_feature_importance.png")
 FEEDBACK_PATH: str = os.path.join("data", "feedback.csv")
 
 MAX_SCORE: float = 10.0
@@ -76,7 +77,16 @@ def load_model():
         st.error(f"Lỗi: Không tìm thấy file mô hình tại `{MODEL_PATH}`. Vui lòng huấn luyện mô hình trước.")
         st.stop()
     try:
-        model = joblib.load(MODEL_PATH)
+        artifact = joblib.load(MODEL_PATH)
+        # Hỗ trợ cả 2 format: dictionary mới (4 khoá) và model trực tiếp (legacy)
+        if isinstance(artifact, dict):
+            model = artifact['model']
+            st.session_state['model_version'] = artifact.get('version', 'N/A')
+            st.session_state['model_features'] = artifact.get('features', [])
+            st.session_state['model_classes'] = artifact.get('classes', [])
+        else:
+            model = artifact  # Legacy: model được lưu trực tiếp
+            st.session_state['model_version'] = 'legacy'
         return model
     except Exception as e:
         st.error(f"Lỗi khi nạp mô hình: {e}")
@@ -659,6 +669,11 @@ def main() -> None:
 
     with tab2:
         st.subheader("📊 Phân Tích Mô Hình Học Máy")
+
+        # Hiển thị phiên bản mô hình
+        model_version = st.session_state.get('model_version', 'N/A')
+        st.caption(f"📌 Phiên bản mô hình: **{model_version}**")
+
         st.markdown("#### Ma trận nhầm lẫn (Confusion Matrix)")
         if os.path.exists(CONFUSION_MATRIX_PATH):
             st.image(CONFUSION_MATRIX_PATH, use_container_width=True)
@@ -666,6 +681,13 @@ def main() -> None:
         st.markdown("#### Cấu trúc Cây quyết định (Tree Plot)")
         if os.path.exists(TREE_PLOT_PATH):
             st.image(TREE_PLOT_PATH, use_container_width=True)
+
+        st.markdown("#### Feature Importance (Mức độ quan trọng của từng môn học)")
+        if os.path.exists(FEATURE_IMPORTANCE_PATH):
+            st.image(FEATURE_IMPORTANCE_PATH, use_container_width=True)
+            st.caption("Biểu đồ thể hiện mức độ quan trọng (Gini/Entropy Decrease) của từng môn học trong quá trình phân loại chuyên ngành.")
+        else:
+            st.info("Chưa có biểu đồ Feature Importance. Vui lòng chạy lại `train_core.py` để tạo.")
 
 
 if __name__ == "__main__":
