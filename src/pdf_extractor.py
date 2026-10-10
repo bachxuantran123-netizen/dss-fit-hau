@@ -108,9 +108,6 @@ _ALIASES_RAW: dict[str, str] = {
     # GIS
     "gis và quản lý đô thị thông minh": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
     "gis và quản lý đô thị": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
-    "bản đồ và hệ thống thông tin địa lý": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
-    "bản đồ và httt địa lý": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
-    "hệ thống thông tin địa lý": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
     "gis và quản lý": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
     "gis": "GIS VÀ QUẢN LÝ ĐÔ THỊ THÔNG MINH",
     # HQTCSDL
