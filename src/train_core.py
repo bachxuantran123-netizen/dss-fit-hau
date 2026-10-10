@@ -22,6 +22,9 @@ from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 
+# Phiên bản mô hình hiện tại
+MODEL_VERSION: str = "1.0.0"
+
 # Fix Windows console encoding
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -32,6 +35,7 @@ PROCESSED_DATA_PATH: str = os.path.join("data", "processed", "FIT_HAU_Cleaned.cs
 MODEL_SAVE_PATH: str = os.path.join("models", "dss_brain.pkl")
 CONFUSION_MATRIX_PATH: str = os.path.join("reports", "dss_confusion_matrix.png")
 TREE_PLOT_PATH: str = os.path.join("reports", "dss_tree.png")
+FEATURE_IMPORTANCE_PATH: str = os.path.join("reports", "dss_feature_importance.png")
 
 TARGET_COLUMN: str = "Chuyen_Nganh"
 
@@ -79,23 +83,35 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> DecisionTreeClassi
     param_grid = {
         'max_depth': [3, 4, 5, 6, 7, 8, None],
         'criterion': ['gini', 'entropy'],
-        'min_samples_split': [2, 5, 10]
+        'min_samples_split': [2, 5, 10],
+        'class_weight': ['balanced', None]
     }
     
-    base_clf = DecisionTreeClassifier(random_state=42)
+    base_clf = DecisionTreeClassifier(random_state=42, class_weight='balanced')
     grid_search = GridSearchCV(estimator=base_clf, param_grid=param_grid, cv=5, scoring='accuracy', n_jobs=-1)
     grid_search.fit(X_train, y_train)
     
     print(f"      ✅ Best parameters: {grid_search.best_params_}")
+    print(f"      ✅ Best CV Score: {grid_search.best_score_:.4f}")
+    print(f"      ✅ CV Score Std: {grid_search.cv_results_['std_test_score'][grid_search.best_index_]:.4f}")
     return grid_search.best_estimator_
 
 
-def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd.Series, feature_columns: list[str]):
+def evaluate_model(clf: DecisionTreeClassifier, X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, y_test: pd.Series, feature_columns: list[str]):
     """Đánh giá hiệu suất mô hình trên tập test và lưu các biểu đồ."""
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
+    # So sánh Train Accuracy vs Test Accuracy để phát hiện overfitting
+    train_acc = accuracy_score(y_train, clf.predict(X_train))
+    print(f"      ✅ Train Accuracy: {train_acc * 100:.2f}%")
     print(f"      ✅ Test Accuracy: {acc * 100:.2f}%")
+    print(f"      ✅ Gap (Train - Test): {(train_acc - acc) * 100:.2f}%")
+    if (train_acc - acc) < 0.05:
+        print("      ✅ Mô hình KHÔNG bị overfitting (gap < 5%)")
+    else:
+        print("      ⚠️  Mô hình CÓ THỂ bị overfitting (gap >= 5%)")
+
     print("\n[4/5] Classification Report:")
     print("-" * 50)
     print(classification_report(y_test, y_pred, zero_division=0))
@@ -124,14 +140,41 @@ def evaluate_model(clf: DecisionTreeClassifier, X_test: pd.DataFrame, y_test: pd
     plt.close()
     print(f"      💾 Saved Tree Plot -> {TREE_PLOT_PATH}")
 
+    # 3. Sinh và lưu Feature Importance Bar Chart
+    importances = clf.feature_importances_
+    sorted_idx = np.argsort(importances)
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.barh(np.array(feature_columns)[sorted_idx], importances[sorted_idx])
+    plt.title("Feature Importance (Gini/Entropy Decrease)")
+    plt.xlabel("Importance")
+    plt.tight_layout()
+    plt.savefig(FEATURE_IMPORTANCE_PATH, dpi=300)
+    plt.close()
+    print(f"      💾 Saved Feature Importance -> {FEATURE_IMPORTANCE_PATH}")
+
     return acc
 
 
 def save_model(clf: DecisionTreeClassifier, filepath: str = MODEL_SAVE_PATH):
-    """Lưu mô hình đã huấn luyện ra file pkl."""
+    """Lưu mô hình đã huấn luyện ra file pkl dưới dạng dictionary 4 khoá.
+    
+    Dictionary gồm:
+        - model: Đối tượng DecisionTreeClassifier đã huấn luyện
+        - features: Danh sách tên feature (môn học)
+        - classes: Danh sách tên lớp (chuyên ngành)
+        - version: Phiên bản mô hình để kiểm tra tương thích
+    """
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    joblib.dump(clf, filepath)
-    print(f"      💾 Saved model -> {filepath}")
+    model_artifact = {
+        'model': clf,
+        'features': list(clf.feature_names_in_),
+        'classes': list(clf.classes_),
+        'version': MODEL_VERSION
+    }
+    joblib.dump(model_artifact, filepath)
+    print(f"      💾 Saved model (dict 4 keys) -> {filepath}")
+    print(f"         Keys: {list(model_artifact.keys())}")
+    print(f"         Version: {MODEL_VERSION}")
 
 
 def run_training_pipeline() -> DecisionTreeClassifier:
@@ -158,7 +201,7 @@ def run_training_pipeline() -> DecisionTreeClassifier:
 
     # Step 4: Evaluate model
     print("\n[4/5] Evaluating model performance...")
-    evaluate_model(clf, X_test, y_test, feature_columns)
+    evaluate_model(clf, X_train, y_train, X_test, y_test, feature_columns)
 
     # Step 5: Save model
     print("\n[5/5] Saving trained model artifact...")
