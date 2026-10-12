@@ -23,8 +23,11 @@ import joblib
 # Ensure current script directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Local PDF extractor
+import numpy as np
+
+# Local modules
 from pdf_extractor import extract_scores_from_student_pdf
+from data_pipeline import CAREER_PROFILES, cosine_similarity_score
 
 STANDARD_SUBJECTS: list[str] = [
     "AN NINH MẠNG", "AN TOÀN VÀ BẢO MẬT HTTT", "C#", "CÔNG NGHỆ PHẦN MỀM",
@@ -600,16 +603,29 @@ def main() -> None:
             classes = model.classes_
             probabilities_raw = model.predict_proba(input_df)[0]
             
-            # --- TÍNH ĐIỂM HYBRID SCORE ---
-            hybrid_scores = dict(zip(classes, probabilities_raw))
-            
-            for pref_career in selected_prefs:
-                if pref_career in hybrid_scores:
-                    hybrid_scores[pref_career] += PREFERENCE_BONUS
-            
-            total_score = sum(hybrid_scores.values())
-            for k in hybrid_scores:
-                hybrid_scores[k] = (hybrid_scores[k] / total_score) * 100
+            # --- TÍNH ĐIỂM HYBRID SCORE (Cách 1: Cosine Similarity + Decision Tree + Sở thích) ---
+            student_vec = np.array([scores_dict.get(feat, -1.0) for feat in STANDARD_SUBJECTS])
+            cos_sim_scores = {
+                career: cosine_similarity_score(student_vec, profile)
+                for career, profile in CAREER_PROFILES.items()
+            }
+            tree_probs = dict(zip(classes, probabilities_raw))
+
+            # Trọng số: 60% Năng lực thực tế môn học (Cosine) + 30% Mô hình AI (Decision Tree) + 10% Sở thích cá nhân
+            has_prefs = len(selected_prefs) > 0
+            w_cos = 0.55 if has_prefs else 0.65
+            w_tree = 0.35 if has_prefs else 0.35
+            w_pref = 0.10 if has_prefs else 0.0
+
+            hybrid_scores = {}
+            for career in classes:
+                sim_val = cos_sim_scores.get(career, 0.0)
+                tree_val = float(tree_probs.get(career, 0.0))
+                pref_val = 1.0 if career in selected_prefs else 0.0
+                
+                # Điểm tổng hợp trên thang 0 - 100%
+                score = (w_cos * sim_val + w_tree * tree_val + w_pref * pref_val) * 100.0
+                hybrid_scores[career] = min(score, 100.0)
                 
             # --- RANKING ---
             ranked_careers = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)
@@ -628,6 +644,19 @@ def main() -> None:
                 st.metric(label="Top 2", value=ranked_careers[1][0], delta=f"{ranked_careers[1][1]:.1f}%", delta_color="off")
             with rank_col3:
                 st.metric(label="Top 3", value=ranked_careers[2][0], delta=f"{ranked_careers[2][1]:.1f}%", delta_color="off")
+
+            with st.expander("📊 Xem bảng phân tích thành phần điểm chi tiết"):
+                breakdown_data = []
+                for rank, (c_name, c_score) in enumerate(ranked_careers, 1):
+                    breakdown_data.append({
+                        "Thứ hạng": f"Top {rank}",
+                        "Chuyên ngành": c_name,
+                        "Điểm tổng hợp": f"{c_score:.1f}%",
+                        "Năng lực môn học (Cosine)": f"{cos_sim_scores.get(c_name, 0.0)*100:.1f}%",
+                        "Mô hình AI (Decision Tree)": f"{tree_probs.get(c_name, 0.0)*100:.1f}%",
+                        "Khớp sở thích": "✅ Có" if c_name in selected_prefs else "—"
+                    })
+                st.dataframe(pd.DataFrame(breakdown_data), hide_index=True, use_container_width=True)
             
             st.markdown("#### 📝 Lời khuyên hành động")
             st.info(CAREER_ADVICE.get(top1_career, "Vui lòng tập trung học tốt các môn chuyên ngành."))

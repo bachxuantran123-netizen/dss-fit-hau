@@ -137,9 +137,6 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # Pandas vectorization (No for loop)
     df_clean[score_cols] = df_clean[score_cols].apply(pd.to_numeric, errors='coerce').fillna(-1.0).round(1)
 
-    # Khắc phục lỗi dữ liệu cũ: thay thế 0.0 thành -1.0 (coi như chưa học)
-    df_clean[score_cols] = df_clean[score_cols].replace(0.0, -1.0)
-
     return df_clean
 
 
