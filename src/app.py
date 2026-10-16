@@ -1,14 +1,3 @@
-"""
-app.py — Streamlit Dashboard (Main Entry Point)
-============================================================
-Giao diện Web cho Hệ Trợ Giúp Quyết Định Học Tập FIT-HAU.
-
-Architecture (Hybrid 2 tầng + Rule-based Preferences):
-    - Tầng 1: Content-Based Filtering (Cosine Similarity) → Gán nhãn
-    - Tầng 2: Decision Tree → Dự đoán + XAI
-    - Tầng 3 (Mới): Hybrid Score = AI Score + Preference Bonus
-    - OCR (Mới): Upload ảnh bảng điểm → Tự động trích xuất điểm
-"""
 
 import os
 import sys
@@ -20,12 +9,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import joblib
 
-# Ensure current script directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
-
-# Local modules
 from pdf_extractor import extract_scores_from_student_pdf
 from data_pipeline import CAREER_PROFILES, cosine_similarity_score
 
@@ -50,9 +36,8 @@ FEEDBACK_PATH: str = os.path.join("data", "feedback.csv")
 
 MAX_SCORE: float = 10.0
 MIN_SCORE: float = 0.0
-PREFERENCE_BONUS: float = 0.10  # Bonus cộng thêm cho mỗi sở thích phù hợp
+PREFERENCE_BONUS: float = 0.10
 
-# Ánh xạ sở thích sang chuyên ngành
 PREFERENCES_MAP = {
     "Thích viết code, tạo ra phần mềm/ứng dụng (Frontend, Backend)": "Software Engineer",
     "Thích làm việc với dữ liệu, truy vấn SQL, thiết kế CSDL": "Data Engineer",
@@ -61,7 +46,6 @@ PREFERENCES_MAP = {
     "Thích cài đặt máy chủ, Linux, hạ tầng mạng, Cloud": "System/DevOps"
 }
 
-# Khuyến nghị hành động
 CAREER_ADVICE = {
     "Software Engineer": "💡 **Khuyến nghị**: Bạn có tư duy logic và kỹ năng lập trình tốt. Hãy tập trung làm chủ 1-2 ngôn ngữ cốt lõi (Java, C#, Python), tìm hiểu sâu về Framework (Spring Boot, React/Vue) và tự làm các dự án thực tế để xây dựng Portfolio trên GitHub.",
     "Data Engineer": "💡 **Khuyến nghị**: Bạn có thế mạnh lớn về tổ chức dữ liệu. Hãy học thêm về SQL nâng cao, Python (thư viện Pandas), các công cụ Big Data (Hadoop, Spark) và kiến trúc kho dữ liệu (Data Warehouse).",
@@ -81,14 +65,13 @@ def load_model():
         st.stop()
     try:
         artifact = joblib.load(MODEL_PATH)
-        # Hỗ trợ cả 2 format: dictionary mới (4 khoá) và model trực tiếp (legacy)
         if isinstance(artifact, dict):
             model = artifact['model']
             st.session_state['model_version'] = artifact.get('version', 'N/A')
             st.session_state['model_features'] = artifact.get('features', [])
             st.session_state['model_classes'] = artifact.get('classes', [])
         else:
-            model = artifact  # Legacy: model được lưu trực tiếp
+            model = artifact
             st.session_state['model_version'] = 'legacy'
         return model
     except Exception as e:
@@ -97,22 +80,15 @@ def load_model():
 
 
 def validate_scores(scores: dict[str, float]) -> tuple[bool, str]:
-    """Zero-Trust validation: kiểm tra điểm hợp lệ.
-    
-    Giá trị hợp lệ:
-        -1.0 = Chưa học (bỏ qua)
-        0.0 - 10.0 = Điểm thực tế
-    """
     for subject, score in scores.items():
         if score == -1.0:
-            continue  # -1.0 = chưa học, hợp lệ
+            continue 
         if score < MIN_SCORE or score > MAX_SCORE:
             return False, f"🚨 Điểm số không hợp lệ ở môn **{subject}**: `{score}`. Vui lòng nhập điểm từ {MIN_SCORE} đến {MAX_SCORE}."
     return True, ""
 
 
 def explain_decision(model, input_data: pd.DataFrame) -> list[dict]:
-    """Trace the decision_path of the Decision Tree and extract logic."""
     node_indicator = model.decision_path(input_data)
     leaf_id = model.apply(input_data)
     
@@ -149,7 +125,6 @@ def explain_decision(model, input_data: pd.DataFrame) -> list[dict]:
 
 
 def create_bar_chart(scores: dict[str, float]) -> go.Figure:
-    """Create a Horizontal Bar Chart visualizing student scores."""
     sorted_scores = dict(sorted(scores.items(), key=lambda item: item[1]))
     subjects = list(sorted_scores.keys())
     values = list(sorted_scores.values())
@@ -214,11 +189,10 @@ def display_system_metrics() -> None:
                     value=f"{avg_rating:.1f} ⭐", 
                     delta=f"{total} lượt đánh giá"
                 )
-        except Exception:  # Non-critical sidebar display — fail silently to not break the main app
+        except Exception: 
             pass
 
 def save_feedback(name: str, suggested_career: str, rating: int, comment: str) -> None:
-    """Lưu đánh giá của người dùng vào file CSV."""
     os.makedirs(os.path.dirname(FEEDBACK_PATH), exist_ok=True)
     file_exists = os.path.exists(FEEDBACK_PATH)
     
@@ -309,14 +283,12 @@ def main() -> None:
                 is_undecided = st.checkbox("🤔 Chưa xác định được sở thích riêng", value=st.session_state.get('is_undecided', False))
                         
             st.divider()
-            
-            # Form Validation cho Sở thích
             if not selected_prefs and not is_undecided:
                 st.warning("⚠️ Vui lòng chọn ít nhất một sở thích ở trên, hoặc tích vào ô 'Chưa xác định được sở thích riêng' để tiếp tục.")
                 
             if st.button("Tiếp theo", type="primary", disabled=(not selected_prefs and not is_undecided)):
                 if is_undecided:
-                    selected_prefs = []  # Xóa sở thích nếu người dùng báo là chưa xác định
+                    selected_prefs = [] 
                     
                 st.session_state.is_anonymous = is_anonymous
                 st.session_state.user_name = user_name
@@ -336,7 +308,6 @@ def main() -> None:
                 "rồi chọn **Lưu dưới dạng PDF (Save as PDF)**."
             )
             
-            # File uploader
             uploaded_files = st.file_uploader(
                 "Chọn file bảng điểm PDF",
                 type=["pdf"],
@@ -346,7 +317,6 @@ def main() -> None:
             )
             
             if uploaded_files:
-                # Hiển thị tất cả ảnh đã upload
                 st.markdown(f"**📂 Đã tải lên {len(uploaded_files)} file PDF:**")
                 
                 cols_preview = st.columns(min(len(uploaded_files), 3))
@@ -354,11 +324,9 @@ def main() -> None:
                     with cols_preview[idx % 3]:
                         st.info(f"📄 PDF {idx + 1}: {uploaded_file.name}")
                 
-                # Nút bấm để bắt đầu trích xuất
                 if st.button("🔍 Trích xuất điểm từ file", type="primary", use_container_width=True):
                     with st.spinner(f"⏳ Đang phân tích {len(uploaded_files)} file..."):
                         try:
-                            # Gộp kết quả từ tất cả file PDF
                             merged_scores: dict[str, float] = {}
                             all_matched_lines: list[dict] = []
                             all_unmatched_lines: list[str] = []
@@ -366,7 +334,7 @@ def main() -> None:
                             all_warnings: list[str] = []
                             
                             for idx, uploaded_file in enumerate(uploaded_files):
-                                uploaded_file.seek(0)  # Reset file pointer
+                                uploaded_file.seek(0) 
                                 
                                 st.toast(f"🔄 Đang xử lý file {idx + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
                                 
@@ -375,7 +343,6 @@ def main() -> None:
                                 try:
                                     pdf_bytes = uploaded_file.read()
                                     
-                                    # ── Thử trích xuất bằng pdfplumber (text-based PDF) ──
                                     ocr_result_single = extract_scores_from_student_pdf(
                                         io.BytesIO(pdf_bytes), save_csv_path=save_csv_path
                                     )
@@ -388,7 +355,6 @@ def main() -> None:
                                             "Chỉ hỗ trợ file PDF dạng văn bản, không hỗ trợ ảnh scan."
                                         )
                                             
-                                    # Lưu CSV nếu có kết quả
                                     final_scores = ocr_result_single.get("scores", {})
                                     if final_scores and save_csv_path:
                                         os.makedirs(os.path.dirname(save_csv_path), exist_ok=True)
@@ -399,12 +365,10 @@ def main() -> None:
                                     st.error(f"Lỗi đọc PDF: {e}")
                                     ocr_result_single = {"scores": {}, "raw_text": [], "matched_lines": [], "unmatched_lines": [], "warnings": [f"Lỗi: {e}"]}
                                 
-                                # Gộp điểm — giữ điểm cao nhất nếu trùng môn
                                 for subject, score in ocr_result_single["scores"].items():
                                     if subject not in merged_scores or score > merged_scores[subject]:
                                         merged_scores[subject] = score
                                 
-                                # Gộp thông tin debug
                                 for ml in ocr_result_single.get("matched_lines", []):
                                     ml["source_image"] = uploaded_file.name
                                     all_matched_lines.append(ml)
@@ -414,7 +378,6 @@ def main() -> None:
                                 
                                 all_raw_text.extend(ocr_result_single.get("raw_text", []))
                             
-                            # Tạo warnings tổng hợp
                             if not merged_scores:
                                 all_warnings.append(
                                     "⚠️ Không trích xuất được điểm nào từ tất cả file. "
@@ -426,7 +389,6 @@ def main() -> None:
                                     "Kết quả có thể không chính xác."
                                 )
                             
-                            # Lưu kết quả gộp vào session state
                             merged_result = {
                                 "scores": merged_scores,
                                 "raw_text": all_raw_text,
@@ -436,7 +398,6 @@ def main() -> None:
                                 "num_images": len(uploaded_files),
                             }
                             
-                            # Clear stale widget states so checkboxes reflect new OCR results accurately
                             for key in list(st.session_state.keys()):
                                 if key.startswith("ocr_check_") or key.startswith("ocr_input_"):
                                     del st.session_state[key]
@@ -462,7 +423,6 @@ def main() -> None:
                     st.rerun()
             with col_manual:
                 if st.button("⌨️ Nhập điểm thủ công (không cần file PDF)", use_container_width=True):
-                    # Vào thẳng form nhập điểm với điểm trống
                     for key in list(st.session_state.keys()):
                         if key.startswith("ocr_check_") or key.startswith("ocr_input_"):
                             del st.session_state[key]
@@ -478,11 +438,9 @@ def main() -> None:
             ocr_result = st.session_state.get('ocr_result', {})
             ocr_scores = st.session_state.get('ocr_scores', {})
             
-            # Hiển thị cảnh báo nếu có
             for warning in ocr_result.get('warnings', []):
                 st.warning(warning)
             
-            # Thống kê kết quả trích xuất
             n_extracted = len(ocr_scores)
             n_total = len(STANDARD_SUBJECTS)
             n_images = ocr_result.get('num_images', 1)
@@ -497,7 +455,6 @@ def main() -> None:
             with col_stat4:
                 st.metric("❓ Không nhận diện", len(ocr_result.get('unmatched_lines', [])))
             
-            # Chi tiết trích xuất (expandable)
             with st.expander("🔍 Xem chi tiết trích xuất điểm (Debug)"):
                 if ocr_result.get('matched_lines'):
                     st.markdown("**Các dòng đã match thành công:**")
@@ -521,7 +478,6 @@ def main() -> None:
                 "Bạn có thể chỉnh sửa nếu cần, hoặc bỏ chọn nếu chưa học môn đó."
             )
             
-            # Hiển thị form chỉnh sửa điểm
             scores_dict = {}
             cols = st.columns(3)
             for i, feature in enumerate(features):
@@ -529,11 +485,9 @@ def main() -> None:
                     has_score = feature in ocr_scores
                     default_score = ocr_scores.get(feature, 0.0)
                     
-                    # Hiển thị icon cho môn đã trích xuất vs chưa
                     icon = "✅" if has_score else "⬜"
                     st.markdown(f"{icon} **{feature}**")
                     
-                    # Checkbox: đã có điểm hay chưa
                     studied_key = f"ocr_studied_{feature}"
                     is_studied = st.checkbox(
                         "Đã có điểm", 
@@ -567,7 +521,6 @@ def main() -> None:
                     st.rerun()
             with col_reupload:
                 if st.button("📄 Upload file khác", use_container_width=True):
-                    # Reset Extract state
                     for key in list(st.session_state.keys()):
                         if key.startswith("ocr_check_") or key.startswith("ocr_input_"):
                             del st.session_state[key]
@@ -599,11 +552,9 @@ def main() -> None:
                 
             input_df = pd.DataFrame([scores_dict])
             
-            # --- AI Prediction ---
             classes = model.classes_
             probabilities_raw = model.predict_proba(input_df)[0]
             
-            # --- TÍNH ĐIỂM HYBRID SCORE (Cách 1: Cosine Similarity + Decision Tree + Sở thích) ---
             student_vec = np.array([scores_dict.get(feat, -1.0) for feat in STANDARD_SUBJECTS])
             cos_sim_scores = {
                 career: cosine_similarity_score(student_vec, profile)
@@ -611,7 +562,6 @@ def main() -> None:
             }
             tree_probs = dict(zip(classes, probabilities_raw))
 
-            # Trọng số: 60% Năng lực thực tế môn học (Cosine) + 30% Mô hình AI (Decision Tree) + 10% Sở thích cá nhân
             has_prefs = len(selected_prefs) > 0
             w_cos = 0.55 if has_prefs else 0.65
             w_tree = 0.35 if has_prefs else 0.35
@@ -623,7 +573,6 @@ def main() -> None:
                 tree_val = float(tree_probs.get(career, 0.0))
                 pref_val = 1.0 if career in selected_prefs else 0.0
                 
-                # Điểm tổng hợp trên thang 0 - 100%
                 score = (w_cos * sim_val + w_tree * tree_val + w_pref * pref_val) * 100.0
                 hybrid_scores[career] = min(score, 100.0)
                 
@@ -661,7 +610,6 @@ def main() -> None:
             st.markdown("#### 📝 Lời khuyên hành động")
             st.info(CAREER_ADVICE.get(top1_career, "Vui lòng tập trung học tốt các môn chuyên ngành."))
             
-            # Tính explanation trước expander để tránh NameError khi tải Excel
             explanation_steps = explain_decision(model, input_df)
             
             with st.expander("🧠 Xem chi tiết quá trình phân tích AI (XAI)"):

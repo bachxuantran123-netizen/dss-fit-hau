@@ -1,17 +1,8 @@
-"""
-merge_new_data.py — Merge file điểm mới vào FIT_HAU_Raw_Scores.csv
-====================================================================
-Nạp file Danh_Sach_70_Sinh_Vien_Diem.csv (4 môn mới: Java, C#, Web, Trí tuệ nhân tạo),
-ánh xạ cột, merge vào dữ liệu gốc 1256 SV.
-
-Output cập nhật: data/raw/FIT_HAU_Raw_Scores.csv
-"""
 
 import os
 import sys
 import pandas as pd
 
-# Fix Windows console encoding
 sys.stdout.reconfigure(encoding='utf-8')
 
 # ============================================================
@@ -20,7 +11,6 @@ sys.stdout.reconfigure(encoding='utf-8')
 NEW_DATA_PATH: str = os.path.join("data", "raw", "Danh_Sach_70_Sinh_Vien_Diem.csv")
 RAW_CSV_PATH: str = os.path.join("data", "raw", "FIT_HAU_Raw_Scores.csv")
 
-# Mapping: column name in new CSV → standardized column name
 NEW_SUBJECT_MAPPING: dict[str, str] = {
     "Java": "JAVA",
     "C#": "C#",
@@ -28,7 +18,6 @@ NEW_SUBJECT_MAPPING: dict[str, str] = {
     "Trí tuệ nhân tạo": "TRÍ TUỆ NHÂN TẠO",
 }
 
-# Metadata column mapping: new file columns → standard columns
 META_MAPPING: dict[str, str] = {
     "Mã SV": "Ma_SV",
     "Họ và tên": "Ho_Ten",
@@ -36,7 +25,6 @@ META_MAPPING: dict[str, str] = {
     "Lớp": "Lop",
 }
 
-# Columns to drop from new file (not needed in merged data)
 DROP_COLUMNS: list[str] = ["STT"]
 
 
@@ -49,14 +37,11 @@ def load_new_data(filepath: str = NEW_DATA_PATH) -> pd.DataFrame:
     print(f"      ✅ Loaded new data: {len(df)} rows, {len(df.columns)} columns")
     print(f"      📋 Columns: {list(df.columns)}")
 
-    # Drop unnecessary columns
     cols_to_drop = [c for c in DROP_COLUMNS if c in df.columns]
     df = df.drop(columns=cols_to_drop)
 
-    # Rename metadata columns
     df = df.rename(columns=META_MAPPING)
 
-    # Rename subject columns
     df = df.rename(columns=NEW_SUBJECT_MAPPING)
 
     print(f"      ✅ After rename: {list(df.columns)}")
@@ -89,7 +74,6 @@ def merge_data() -> pd.DataFrame:
             df_existing[subj] = -1.0
             print(f"      ➕ Added column: {subj}")
 
-    # Ensure all 24 subject columns exist in new data (fill missing with -1.0 = chưa học)
     all_subject_cols = [c for c in df_existing.columns if c not in ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]]
     for col in all_subject_cols:
         if col not in df_new.columns:
@@ -103,7 +87,6 @@ def merge_data() -> pd.DataFrame:
 
     existing_ids = set(df_existing["Ma_SV"])
 
-    # ── Part A: Update new subject scores for existing students ──
     update_cols = [s for s in new_subjects if s in df_new.columns]
     df_update = (
         df_new[df_new["Ma_SV"].isin(existing_ids)][["Ma_SV"] + update_cols]
@@ -120,7 +103,6 @@ def merge_data() -> pd.DataFrame:
             )
         df_existing = df_existing.reset_index()
 
-    # ── Part B: Append brand-new students ──
     new_mask = ~df_new["Ma_SV"].isin(existing_ids)
     df_new_students = df_new[new_mask].copy()
     appended_count = len(df_new_students)
@@ -139,12 +121,10 @@ def merge_data() -> pd.DataFrame:
     print(f"      ✅ Appended new students: {appended_count}")
     print(f"      ✅ Total students now: {len(df_existing)}")
 
-    # Reorder columns: metadata first, then subjects alphabetically
     meta_cols = ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]
     subj_cols = sorted([c for c in df_existing.columns if c not in meta_cols])
     df_existing = df_existing[meta_cols + subj_cols]
 
-    # Save
     df_existing.to_csv(RAW_CSV_PATH, index=False, encoding="utf-8-sig")
     print(f"\n  💾 Saved → {RAW_CSV_PATH}")
     print(f"  📐 Shape: {df_existing.shape[0]} rows × {df_existing.shape[1]} columns")

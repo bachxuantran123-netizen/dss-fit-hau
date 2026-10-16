@@ -1,17 +1,3 @@
-"""
-train_core.py — AI Core Training Pipeline (Tầng 2: Decision Tree)
-==================================================================
-Module huấn luyện mô hình Decision Tree tự động cho hệ thống DSS FIT-HAU.
-
-Kiến trúc Hybrid 2 tầng:
-    Tầng 1 (data_pipeline.py): Content-Based Filtering (Cosine Similarity)
-        → Gán nhãn cho dữ liệu training.
-    Tầng 2 (file này): Decision Tree (GridSearchCV)
-        → Học từ nhãn đã gán, dự đoán cho user mới, cung cấp XAI.
-
-Hỗ trợ linh hoạt cấu trúc dữ liệu mở rộng với 20 features (môn học).
-"""
-
 import os
 import sys
 import joblib
@@ -22,10 +8,8 @@ from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 
-# Phiên bản mô hình hiện tại
 MODEL_VERSION: str = "1.0.0"
 
-# Fix Windows console encoding
 sys.stdout.reconfigure(encoding='utf-8')
 
 # ============================================================
@@ -44,7 +28,6 @@ TARGET_COLUMN: str = "Chuyen_Nganh"
 # FUNCTIONS
 # ============================================================
 def load_processed_data(filepath: str = PROCESSED_DATA_PATH) -> pd.DataFrame:
-    """Load cleaned dataset from processed folder."""
     if not os.path.exists(filepath):
         raise FileNotFoundError(
             f"Không tìm thấy file dữ liệu đã xử lý tại: {filepath}. Vui lòng chạy data_pipeline.py trước."
@@ -54,12 +37,6 @@ def load_processed_data(filepath: str = PROCESSED_DATA_PATH) -> pd.DataFrame:
 
 
 def split_data(df: pd.DataFrame) -> tuple:
-    """Chia tập dữ liệu thành train/test tự động dựa trên các cột thực tế có trong df.
-
-    Returns:
-        tuple: (X_train, X_test, y_train, y_test, feature_columns)
-    """
-    # Xác định tất cả các cột làm feature (loại bỏ cột target)
     feature_columns = [col for col in df.columns if col != TARGET_COLUMN]
 
     if not feature_columns:
@@ -68,18 +45,15 @@ def split_data(df: pd.DataFrame) -> tuple:
     X = df[feature_columns]
     y = df[TARGET_COLUMN]
 
-    # Chia train/test (80% / 20%), giữ nguyên tỷ lệ nhãn bằng stratify nếu có thể
     try:
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     except ValueError:
-        # Trường hợp một số lớp quá ít mẫu không thể stratify
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     return X_train, X_test, y_train, y_test, feature_columns
 
 
 def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> DecisionTreeClassifier:
-    """Khởi tạo và huấn luyện mô hình Decision Tree Classifier với GridSearchCV."""
     param_grid = {
         'max_depth': [3, 4, 5, 6, 7, 8, None],
         'criterion': ['gini', 'entropy'],
@@ -98,11 +72,9 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> DecisionTreeClassi
 
 
 def evaluate_model(clf: DecisionTreeClassifier, X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, y_test: pd.Series, feature_columns: list[str]):
-    """Đánh giá hiệu suất mô hình trên tập test và lưu các biểu đồ."""
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
-    # So sánh Train Accuracy vs Test Accuracy để phát hiện overfitting
     train_acc = accuracy_score(y_train, clf.predict(X_train))
     print(f"      ✅ Train Accuracy: {train_acc * 100:.2f}%")
     print(f"      ✅ Test Accuracy: {acc * 100:.2f}%")
@@ -117,10 +89,8 @@ def evaluate_model(clf: DecisionTreeClassifier, X_train: pd.DataFrame, y_train: 
     print(classification_report(y_test, y_pred, zero_division=0))
     print("-" * 50)
     
-    # Tạo thư mục reports nếu chưa tồn tại
     os.makedirs(os.path.dirname(CONFUSION_MATRIX_PATH), exist_ok=True)
     
-    # 1. Sinh và lưu Confusion Matrix
     fig, ax = plt.subplots(figsize=(10, 8))
     ConfusionMatrixDisplay.from_estimator(clf, X_test, y_test, ax=ax, cmap='Blues')
     plt.xticks(rotation=45, ha="right")  # Xoay nhãn trục x để không bị đè lên nhau
@@ -130,9 +100,7 @@ def evaluate_model(clf: DecisionTreeClassifier, X_train: pd.DataFrame, y_train: 
     plt.close()
     print(f"      💾 Saved Confusion Matrix -> {CONFUSION_MATRIX_PATH}")
 
-    # 2. Sinh và lưu Sơ đồ cây (Tree Plot)
     fig, ax = plt.subplots(figsize=(20, 10))
-    # Giới hạn max_depth=3 để cây không bị rối rắm trên hình vẽ
     plot_tree(clf, feature_names=feature_columns, class_names=clf.classes_, filled=True, rounded=True, ax=ax, fontsize=10, max_depth=3)
     plt.title("Cấu trúc Cây Quyết Định (Top 3 Levels)")
     plt.tight_layout()
@@ -140,7 +108,6 @@ def evaluate_model(clf: DecisionTreeClassifier, X_train: pd.DataFrame, y_train: 
     plt.close()
     print(f"      💾 Saved Tree Plot -> {TREE_PLOT_PATH}")
 
-    # 3. Sinh và lưu Feature Importance Bar Chart
     importances = clf.feature_importances_
     sorted_idx = np.argsort(importances)
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -156,14 +123,6 @@ def evaluate_model(clf: DecisionTreeClassifier, X_train: pd.DataFrame, y_train: 
 
 
 def save_model(clf: DecisionTreeClassifier, filepath: str = MODEL_SAVE_PATH):
-    """Lưu mô hình đã huấn luyện ra file pkl dưới dạng dictionary 4 khoá.
-    
-    Dictionary gồm:
-        - model: Đối tượng DecisionTreeClassifier đã huấn luyện
-        - features: Danh sách tên feature (môn học)
-        - classes: Danh sách tên lớp (chuyên ngành)
-        - version: Phiên bản mô hình để kiểm tra tương thích
-    """
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     model_artifact = {
         'model': clf,
@@ -178,7 +137,6 @@ def save_model(clf: DecisionTreeClassifier, filepath: str = MODEL_SAVE_PATH):
 
 
 def run_training_pipeline() -> DecisionTreeClassifier:
-    """Thực thi toàn bộ pipeline huấn luyện mô hình end-to-end."""
     print("=" * 60)
     print("🧠 DSS FIT-HAU — AI Core Training Pipeline")
     print("=" * 60)

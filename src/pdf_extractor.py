@@ -1,11 +1,3 @@
-"""
-pdf_extractor.py — Trích xuất điểm thi từ file PDF bảng điểm HAU
-=================================================================
-Quét toàn bộ thư mục data/raw/ĐIỂM NĂM 24-25, trích xuất điểm TBCMH
-của các môn thuộc ngành CNTT, gộp theo Mã SV thành 1 file CSV duy nhất.
-
-Output: data/raw/FIT_HAU_Raw_Scores.csv
-"""
 
 import os
 import sys
@@ -15,7 +7,6 @@ import unicodedata
 import pdfplumber
 import pandas as pd
 
-# Fix Windows console encoding
 sys.stdout.reconfigure(encoding='utf-8')
 
 # ============================================================
@@ -51,7 +42,6 @@ STANDARD_SUBJECTS: list[str] = [
     "XỬ LÝ ẢNH",
 ]
 
-# Mã học phần HAU -> Môn chuẩn (24 môn)
 SUBJECT_CODES: dict[str, str] = {
     "TH5219": "AN NINH MẠNG",
     "TH5210": "AN TOÀN VÀ BẢO MẬT HTTT",
@@ -79,7 +69,6 @@ SUBJECT_CODES: dict[str, str] = {
     "TH5209": "XỬ LÝ ẢNH",
 }
 
-# Tên môn / Từ khóa / Tên viết tắt -> Môn chuẩn
 _ALIASES_RAW: dict[str, str] = {
     # An ninh mạng
     "an ninh mạng": "AN NINH MẠNG",
@@ -173,34 +162,29 @@ _ALIASES_RAW: dict[str, str] = {
     "kỹ thuật xử lý ảnh": "XỬ LÝ ẢNH",
 }
 
-# Tương thích ngược: SUBJECT_MAPPING tham chiếu _ALIASES_RAW
 SUBJECT_MAPPING: dict[str, str] = _ALIASES_RAW
 
-# Column indices in PDF table (based on observed structure)
 IDX_MA_SV: int = 1
 IDX_HO_TEN: int = 2
 IDX_NGAY_SINH: int = 3
 IDX_LOP: int = 4
-IDX_TBCMH_SO: int = 7  # Điểm TBCMH dạng số
+IDX_TBCMH_SO: int = 7
 
 SCORE_PATTERN = re.compile(r"(\d{1,2}[.,]\d+|\d{1,2})\s*$")
 
 def remove_accents(input_str: str) -> str:
-    """Loại bỏ dấu tiếng Việt (O(n), xử lý cả đ/Đ)."""
     s = unicodedata.normalize("NFD", input_str)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     return s.replace("đ", "d").replace("Đ", "D")
 
 
 def normalize_text(text: str) -> str:
-    """NFC, lowercase, bỏ ký tự phân cách, gộp khoảng trắng."""
     text = unicodedata.normalize("NFC", text).lower().strip()
     text = re.sub(r"[_\-–—|/\\]", " ", text)
     return re.sub(r"\s+", " ", text)
 
 
 def _norm_key(text: str) -> str:
-    """Khoá so khớp: không dấu, chữ thường, chỉ giữ [a-z0-9#] và khoảng trắng."""
     s = remove_accents(unicodedata.normalize("NFC", text).lower())
     s = re.sub(r"[^a-z0-9#]+", " ", s)
     return re.sub(r"\s+", " ", s).strip()
@@ -215,25 +199,16 @@ _FUZZY_KEYS: list[str] = [k for k in _ALIASES if len(k) >= 6]
 # FUNCTIONS
 # ============================================================
 def match_subject(text: str) -> str | None:
-    """Map Mã học phần hoặc Tên môn sang 24 môn chuẩn.
-
-    Hỗ trợ:
-    1) So khớp Mã học phần (vd: TH5219, TH4315, DT1926.1...)
-    2) So khớp chính xác hoặc chuỗi con (không dấu, xử lý lệch dấu tiếng Việt)
-    3) So khớp mờ (difflib) cho trường hợp sai sót chính tả / ngắt từ nhẹ.
-    """
     if not text:
         return None
     raw_str = str(text).strip()
     if not raw_str:
         return None
 
-    # 1. Match theo mã học phần (vd TH5209, TH4315, DT1926...)
     for code, subj in SUBJECT_CODES.items():
         if re.search(rf"\b{re.escape(code)}(?:\.\d+)?\b", raw_str, re.I):
             return subj
 
-    # 2. Khớp theo alias tên môn (bỏ dấu tiếng Việt, chống lệch quy tắc đặt dấu)
     n = _norm_key(raw_str)
     if not n:
         return None
@@ -243,7 +218,6 @@ def match_subject(text: str) -> str | None:
         if re.search(rf"(?<![a-z0-9#]){re.escape(alias)}(?![a-z0-9#])", n):
             return _ALIASES[alias]
 
-    # 3. Fuzzy match (cho tên môn dài >= 6 ký tự để bắt sai sót nhẹ)
     if len(n) >= 6:
         close = difflib.get_close_matches(n, _FUZZY_KEYS, n=1, cutoff=0.82)
         if close:
@@ -253,11 +227,7 @@ def match_subject(text: str) -> str | None:
 
 
 def extract_scores_from_pdf(pdf_path: str) -> list[dict]:
-    """Extract student scores from a single PDF file.
 
-    Returns:
-        list of dicts with keys: Ma_SV, Ho_Ten, Ngay_Sinh, Lop, Diem
-    """
     records = []
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -271,7 +241,7 @@ def extract_scores_from_pdf(pdf_path: str) -> list[dict]:
                             continue
                         ma_sv = row[IDX_MA_SV]
                         if ma_sv is None or not re.match(r'^\d{7,}', str(ma_sv).strip()):
-                            continue  # Skip header/non-student rows
+                            continue  
 
                         diem_str = row[IDX_TBCMH_SO]
                         try:
@@ -292,12 +262,6 @@ def extract_scores_from_pdf(pdf_path: str) -> list[dict]:
 
 
 def scan_all_pdfs() -> pd.DataFrame:
-    """Scan all PDF files, extract IT subject scores, and merge by Ma_SV.
-
-    Returns:
-        pd.DataFrame with columns: Ma_SV, Ho_Ten, Ngay_Sinh, Lop,
-        <subject_1>, <subject_2>, ..., <subject_N>
-    """
     all_records: dict[str, dict] = {}  # Ma_SV -> {subject: score, ...}
     subject_set: set[str] = set()
     files_processed = 0
@@ -334,7 +298,6 @@ def scan_all_pdfs() -> pd.DataFrame:
                         "Ngay_Sinh": rec["Ngay_Sinh"],
                         "Lop": rec["Lop"],
                     }
-                # Ghi điểm vào cột tương ứng — nếu trùng thì giữ điểm cao nhất
                 current = all_records[ma_sv].get(subject_name, 0.0)
                 all_records[ma_sv][subject_name] = max(current, rec["Diem"])
 
@@ -345,19 +308,16 @@ def scan_all_pdfs() -> pd.DataFrame:
     print(f"      Subjects found: {len(subject_set)}")
     print(f"      Subjects: {sorted(subject_set)}")
 
-    # Build DataFrame
     if not all_records:
         return pd.DataFrame(columns=["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"])
         
     df = pd.DataFrame(list(all_records.values()))
 
-    # Fill missing subjects with -1.0 (to distinguish from a real score of 0.0)
     for subj in sorted(subject_set):
         if subj not in df.columns:
             df[subj] = -1.0
     df = df.fillna(-1.0)
 
-    # Reorder columns: metadata first, then subjects alphabetically
     meta_cols = ["Ma_SV", "Ho_Ten", "Ngay_Sinh", "Lop"]
     subj_cols = sorted([c for c in df.columns if c not in meta_cols])
     df = df[meta_cols + subj_cols]
@@ -375,8 +335,6 @@ def run_extraction() -> pd.DataFrame:
         raise FileNotFoundError(f"Không tìm thấy thư mục: {RAW_BASE_DIR}")
 
     df = scan_all_pdfs()
-
-    # Guard: đảm bảo đã trích xuất được dữ liệu
     if df.empty:
         raise ValueError(
             "Không trích xuất được dữ liệu nào từ PDF. "
@@ -398,11 +356,6 @@ def run_extraction() -> pd.DataFrame:
 # PDF READER (cho bảng điểm định dạng PDF của 1 sinh viên)
 # ============================================================
 def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> dict:
-    """Trích xuất điểm từ bảng điểm cá nhân dạng PDF.
-    
-    Đọc toàn bộ file PDF, trích xuất bảng, xuất ra CSV nếu có save_csv_path.
-    Quét qua các dòng để tìm tên môn và điểm TBCMH.
-    """
     scores = {}
     matched_lines = []
     unmatched_lines = []
@@ -414,10 +367,8 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
         with pdfplumber.open(pdf_file_or_bytes) as pdf:
             for page in pdf.pages:
                 tables = page.extract_tables()
-                # Fallback 1: nếu PDF không có viền bảng (grid lines)
                 if not tables:
                     tables = page.extract_tables({"vertical_strategy": "text", "horizontal_strategy": "text"})
-                # Fallback 2: thử với tolerance cao hơn
                 if not tables:
                     tables = page.extract_tables({
                         "vertical_strategy": "text",
@@ -433,8 +384,6 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                             all_rows.append(cleaned_row)
                             raw_texts.append(" | ".join(cleaned_row))
                 
-                # Fallback 3: Nếu vẫn không tìm được bảng, trích xuất text thuần
-                # và tách thành các dòng riêng biệt
                 if not tables:
                     page_text = page.extract_text()
                     if page_text:
@@ -445,13 +394,11 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                 all_rows.append(cleaned_row)
                                 raw_texts.append(line)
                             
-        # Xuất file CSV theo yêu cầu
         if save_csv_path and all_rows:
             os.makedirs(os.path.dirname(save_csv_path), exist_ok=True)
             df = pd.DataFrame(all_rows)
             df.to_csv(save_csv_path, index=False, header=False, encoding='utf-8-sig')
             
-        # Khởi tạo vị trí cột
         subject_col_idx = -1
         score_col_idx = -1
         code_col_idx = -1
@@ -460,11 +407,9 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
         pending_score = ""
         pending_raw = ""
         
-        # Tìm điểm từ các dòng
         for row in all_rows:
             lower_row = [str(c).lower().strip() for c in row]
             
-            # Kiểm tra xem dòng này có phải là dòng tiêu đề (header) không
             temp_subj_idx = -1
             temp_score_idx = -1
             temp_code_idx = -1
@@ -480,11 +425,8 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                     temp_score_idx = i
                     
             if temp_subj_idx != -1 or temp_score_idx != -1:
-                # Cập nhật vị trí cột cho bảng hiện tại
                 if temp_subj_idx != -1:
                     subject_col_idx = temp_subj_idx
-                # Lưu ý quan trọng: Nếu bảng không có cột điểm (ví dụ bảng "Các học phần chưa tích lũy"),
-                # đặt score_col_idx = -1 để không nhận diện nhầm số tiết / tín chỉ thành điểm số!
                 score_col_idx = temp_score_idx
                 if temp_code_idx != -1:
                     code_col_idx = temp_code_idx
@@ -493,18 +435,14 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                 pending_raw = ""
                 continue
                 
-            # Nếu bảng hiện tại không có cột điểm (ví dụ bảng "Các học phần chưa tích lũy"), bỏ qua dòng này
             if score_col_idx == -1 and temp_score_idx == -1:
                 if subject_col_idx != -1:
                     continue
 
-            # Xử lý đặc biệt cho dòng text thuần (1 cột duy nhất, từ fallback 3)
-            # Quét toàn bộ dòng để tìm cả tên môn lẫn điểm
             if len(row) == 1 and subject_col_idx == -1:
                 full_line = str(row[0]).strip()
                 matched = match_subject(full_line)
                 if matched:
-                    # Tìm điểm trong dòng
                     score_match = SCORE_PATTERN.search(full_line)
                     if score_match:
                         score_str = score_match.group(1).replace(',', '.')
@@ -521,13 +459,11 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                 continue
                         except (ValueError, TypeError):
                             pass
-                    # Match môn nhưng chưa có điểm → pending
                     pending_subj = full_line
                     pending_score = ""
                     pending_raw = full_line
                     continue
                 elif pending_subj:
-                    # Dòng không match môn nhưng có pending → thử nối
                     combined = (pending_subj + " " + full_line).strip()
                     matched_combined = match_subject(combined)
                     score_match = SCORE_PATTERN.search(full_line)
@@ -549,7 +485,6 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                 continue
                         except (ValueError, TypeError):
                             pass
-                    # Dòng chứa điểm cho pending subject?
                     if not matched_combined and pending_subj:
                         pend_matched = match_subject(pending_subj)
                         if pend_matched and score_match:
@@ -572,31 +507,26 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                 pass
                 continue
                         
-            # Nếu chưa xác định được cột Tên môn từ header, thử tìm dựa trên dữ liệu thực tế
             if subject_col_idx == -1:
                 for i, cell_val in enumerate(lower_row):
                     if match_subject(cell_val):
                         subject_col_idx = i
                         break
                         
-            # Xử lý cho bảng đã xác định được cột Tên môn học
             if subject_col_idx != -1 and subject_col_idx < len(row):
                 cell_subj = str(row[subject_col_idx]).strip()
                 cell_code = str(row[code_col_idx]).strip() if code_col_idx != -1 and code_col_idx < len(row) else ""
                 cell_score = str(row[score_col_idx]).strip() if score_col_idx != -1 and score_col_idx < len(row) else ""
                 raw_text = " | ".join(row)
                 
-                # Nối tiếp với dòng trước đó (xử lý môn bị cắt xuống dòng)
                 combined_subj = (pending_subj + " " + cell_subj).strip()
                 combined_score = cell_score if cell_score else pending_score
                 combined_raw = (pending_raw + " | " + raw_text) if pending_raw else raw_text
                 
-                # 1. Thử match tên môn kết hợp (nếu có dòng trước chưa khớp)
                 matched_subj = None
                 if pending_subj:
                     matched_subj = match_subject(combined_subj)
                     
-                # 2. Thử match nguyên ô Tên môn hiện tại
                 if not matched_subj:
                     matched_subj = match_subject(cell_subj)
                     if matched_subj:
@@ -604,7 +534,6 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                         combined_score = cell_score
                         combined_raw = raw_text
                         
-                # 3. Thử match theo ô Mã học phần
                 if not matched_subj and cell_code:
                     matched_subj = match_subject(cell_code)
                     if matched_subj:
@@ -612,7 +541,6 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                         combined_score = cell_score
                         combined_raw = raw_text
 
-                # 4. Thử quét toàn bộ các ô trong dòng
                 if not matched_subj:
                     for cell in row:
                         m = match_subject(str(cell).strip())
@@ -626,7 +554,6 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                 if matched_subj:
                     found_score = False
                     match = SCORE_PATTERN.search(combined_score)
-                    # Nếu ô điểm theo cột không có số hợp lệ, quét các ô phía sau của dòng
                     if not match:
                         for cell in reversed(row):
                             m_candidate = SCORE_PATTERN.search(str(cell).strip())
@@ -652,7 +579,6 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                                     "confidence": 1.0
                                 })
                                 found_score = True
-                                # Reset sau khi thành công
                                 pending_subj = ""
                                 pending_score = ""
                                 pending_raw = ""
@@ -660,12 +586,10 @@ def extract_scores_from_student_pdf(pdf_file_or_bytes, save_csv_path=None) -> di
                             pass
                             
                     if not found_score:
-                        # Match môn nhưng chưa có điểm -> Đợi dòng tiếp theo
                         pending_subj = combined_subj
                         pending_score = combined_score
                         pending_raw = combined_raw
                 else:
-                    # Không match môn -> Lưu lại chờ nối dòng
                     if cell_subj:
                         if len(pending_subj) < 100:
                             pending_subj = combined_subj
